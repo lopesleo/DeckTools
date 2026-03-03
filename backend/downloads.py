@@ -925,11 +925,9 @@ async def _download_zip_for_app(appid: int) -> None:
                     # Auto-configure SLSsteam so the game appears in Steam library
                     _set_download_state(appid, {"status": "configuring"})
                     try:
-                        from slssteam_ops import add_fake_app_id, add_game_token, add_game_dlcs, add_to_additional_apps
+                        from slssteam_ops import add_game_token, add_game_dlcs, add_to_additional_apps
                         r0 = add_to_additional_apps(appid)
                         logger.info(f"QuickAccela: SLSsteam add_to_additional_apps({appid}): {r0}")
-                        r1 = add_fake_app_id(appid)
-                        logger.info(f"QuickAccela: SLSsteam add_fake_app_id({appid}): {r1}")
                         r2 = add_game_token(appid)
                         logger.info(f"QuickAccela: SLSsteam add_game_token({appid}): {r2}")
                         r3 = await add_game_dlcs(appid)
