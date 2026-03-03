@@ -726,6 +726,21 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
         logger.warning(f"QuickAccela: chown failed for {install_dir}: {chown_exc}")
 
 
+async def _restart_steam_delayed(delay: int = 5) -> None:
+    """Restart Steam after a delay. On Steam Deck Game Mode, Steam auto-restarts."""
+    await asyncio.sleep(delay)
+    try:
+        import subprocess
+        logger.info("QuickAccela: Restarting Steam...")
+        subprocess.Popen(
+            ["steam", "-shutdown"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        logger.warning(f"QuickAccela: Failed to restart Steam: {e}")
+
+
 def _get_dir_size(path: str) -> int:
     """Calculate total size of all files in a directory tree."""
     total = 0
@@ -975,6 +990,9 @@ async def _download_zip_for_app(appid: int) -> None:
                         return
 
                     _set_download_state(appid, {"status": "done", "success": True, "api": name})
+
+                    # Restart Steam so it picks up the new appmanifest
+                    asyncio.ensure_future(_restart_steam_delayed(5))
                     return
                 except Exception as install_exc:
                     if isinstance(install_exc, RuntimeError) and str(install_exc) == "cancelled":

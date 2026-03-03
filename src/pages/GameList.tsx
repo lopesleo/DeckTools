@@ -131,11 +131,11 @@ export function GameList() {
             setAddStatus("Installing...");
           } else if (phase === "done") {
             clearInterval(pollInterval);
-            setAddStatus("Done! Game added.");
+            setAddStatus("Done! Restarting Steam...");
             setTimeout(() => {
               loadGames();
               setAddStatus("");
-            }, 2000);
+            }, 6000);
           } else if (phase === "failed") {
             clearInterval(pollInterval);
             setAddStatus(st.error || "Download failed");
