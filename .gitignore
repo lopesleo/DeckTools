@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.pyc
+__pycache__/
+.claude/
+tmpclaude-*
+askpass.sh

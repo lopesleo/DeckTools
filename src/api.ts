@@ -1,0 +1,214 @@
+/**
+ * Backend API wrapper — calls Python methods via Decky's serverAPI.
+ *
+ * Every backend method returns a JSON string.
+ * parseResult() deserialises it for the caller.
+ */
+import { call } from "@decky/api";
+
+function parseResult<T = any>(raw: string): T {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { success: false, error: "Failed to parse response" } as any;
+  }
+}
+
+// Platform
+export const getPlatformSummary = async () =>
+  parseResult(await call<[], string>("get_platform_summary"));
+
+export const verifySlssteamInjected = async () =>
+  parseResult(await call<[], string>("verify_slssteam_injected"));
+
+// API Manifest
+export const initApis = async () =>
+  parseResult(await call<[], string>("init_apis"));
+
+export const fetchFreeApisNow = async () =>
+  parseResult(await call<[], string>("fetch_free_apis_now"));
+
+export const getInitApisMessage = async () =>
+  parseResult(await call<[], string>("get_init_apis_message"));
+
+export const saveRyuCookie = async (cookie: string) =>
+  parseResult(await call<[string], string>("save_ryu_cookie", cookie));
+
+export const loadRyuCookie = async () =>
+  parseResult(await call<[], string>("load_ryu_cookie"));
+
+export const updateMorrenusKey = async (key: string) =>
+  parseResult(await call<[string], string>("update_morrenus_key", key));
+
+// Downloads
+export const startDownload = async (appid: number) =>
+  parseResult(await call<[number], string>("start_download", appid));
+
+export const getDownloadStatus = async (appid: number) =>
+  parseResult(await call<[number], string>("get_download_status", appid));
+
+export const cancelDownload = async (appid: number) =>
+  parseResult(await call<[number], string>("cancel_download", appid));
+
+export const hasLuatoolsForApp = async (appid: number) =>
+  parseResult(await call<[number], string>("has_luatools_for_app", appid));
+
+export const deleteLuatoolsForApp = async (appid: number) =>
+  parseResult(await call<[number], string>("delete_luatools_for_app", appid));
+
+export const getInstalledLuaScripts = async () =>
+  parseResult(await call<[], string>("get_installed_lua_scripts"));
+
+export const readLoadedApps = async () =>
+  parseResult(await call<[], string>("read_loaded_apps"));
+
+export const dismissLoadedApps = async () =>
+  parseResult(await call<[], string>("dismiss_loaded_apps"));
+
+export const fetchAppName = async (appid: number) =>
+  parseResult(await call<[number], string>("fetch_app_name", appid));
+
+export const getGamesDatabase = async () =>
+  parseResult(await call<[], string>("get_games_database"));
+
+export const saveLauncherPathConfig = async (path: string) =>
+  parseResult(await call<[string], string>("save_launcher_path_config", path));
+
+export const loadLauncherPath = async () =>
+  parseResult(await call<[], string>("load_launcher_path"));
+
+// Steam Utils
+export const getGameInstallPath = async (appid: number) =>
+  parseResult(await call<[number], string>("get_game_install_path", appid));
+
+export const getInstalledGames = async () =>
+  parseResult(await call<[], string>("get_installed_games"));
+
+// SLSsteam Config (read/write)
+export const readSlsConfig = async () =>
+  parseResult(await call<[], string>("read_sls_config"));
+
+export const getSlsValue = async (key: string) =>
+  parseResult(await call<[string], string>("get_sls_value", key));
+
+export const setSlsValue = async (key: string, value: any) =>
+  parseResult(await call<[string, any], string>("set_sls_value", key, value));
+
+// SLSsteam Operations
+export const addFakeAppId = async (appid: number) =>
+  parseResult(await call<[number], string>("add_fake_app_id", appid));
+
+export const removeFakeAppId = async (appid: number) =>
+  parseResult(await call<[number], string>("remove_fake_app_id", appid));
+
+export const checkFakeAppIdStatus = async (appid: number) =>
+  parseResult(await call<[number], string>("check_fake_app_id_status", appid));
+
+export const addGameToken = async (appid: number) =>
+  parseResult(await call<[number], string>("add_game_token", appid));
+
+export const removeGameToken = async (appid: number) =>
+  parseResult(await call<[number], string>("remove_game_token", appid));
+
+export const checkGameTokenStatus = async (appid: number) =>
+  parseResult(await call<[number], string>("check_game_token_status", appid));
+
+export const addGameDlcs = async (appid: number) =>
+  parseResult(await call<[number], string>("add_game_dlcs", appid));
+
+export const removeGameDlcs = async (appid: number) =>
+  parseResult(await call<[number], string>("remove_game_dlcs", appid));
+
+export const checkGameDlcsStatus = async (appid: number) =>
+  parseResult(await call<[number], string>("check_game_dlcs_status", appid));
+
+export const getSlsPlayStatus = async () =>
+  parseResult(await call<[], string>("get_sls_play_status"));
+
+export const setSlsPlayStatus = async (enabled: boolean) =>
+  parseResult(await call<[boolean], string>("set_sls_play_status", enabled));
+
+export const uninstallGameFull = async (appid: number) =>
+  parseResult(await call<[number], string>("uninstall_game_full", appid));
+
+// Fixes
+export const checkForFixes = async (appid: number) =>
+  parseResult(await call<[number], string>("check_for_fixes", appid));
+
+export const applyGameFix = async (
+  appid: number,
+  downloadUrl: string,
+  installPath: string,
+  fixType: string,
+  gameName: string,
+) =>
+  parseResult(
+    await call<[number, string, string, string, string], string>(
+      "apply_game_fix",
+      appid,
+      downloadUrl,
+      installPath,
+      fixType,
+      gameName,
+    ),
+  );
+
+export const getApplyFixStatus = async (appid: number) =>
+  parseResult(await call<[number], string>("get_apply_fix_status", appid));
+
+export const cancelApplyFix = async (appid: number) =>
+  parseResult(await call<[number], string>("cancel_apply_fix", appid));
+
+export const unfixGame = async (
+  appid: number,
+  installPath?: string,
+  fixDate?: string,
+) =>
+  parseResult(
+    await call<[number, string, string], string>(
+      "unfix_game",
+      appid,
+      installPath ?? "",
+      fixDate ?? "",
+    ),
+  );
+
+export const getUnfixStatus = async (appid: number) =>
+  parseResult(await call<[number], string>("get_unfix_status", appid));
+
+export const getInstalledFixes = async () =>
+  parseResult(await call<[], string>("get_installed_fixes"));
+
+export const applyLinuxNativeFix = async (installPath: string) =>
+  parseResult(
+    await call<[string], string>("apply_linux_native_fix", installPath),
+  );
+
+// Workshop
+export const startWorkshopDownload = async (appid: number, pubfileId: number) =>
+  parseResult(
+    await call<[number, number], string>(
+      "start_workshop_download",
+      appid,
+      pubfileId,
+    ),
+  );
+
+export const getWorkshopDownloadStatus = async () =>
+  parseResult(await call<[], string>("get_workshop_download_status"));
+
+export const cancelWorkshopDownload = async () =>
+  parseResult(await call<[], string>("cancel_workshop_download"));
+
+export const saveWorkshopToolPath = async (path: string) =>
+  parseResult(await call<[string], string>("save_workshop_tool_path", path));
+
+// Dependencies
+export const checkDependencies = async () =>
+  parseResult(await call<[], string>("check_dependencies"));
+
+export const installDependencies = async () =>
+  parseResult(await call<[], string>("install_dependencies"));
+
+export const getInstallStatus = async () =>
+  parseResult(await call<[], string>("get_install_status"));
