@@ -295,99 +295,102 @@ async def search_morrenus(query: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-async def check_game_update(appid: int) -> dict:
-    """Check if a game has an update available by comparing local manifest IDs with Morrenus."""
-    import re
-    import tempfile
-    import zipfile
+def _depot_snapshot_path(appid: int) -> str:
+    """Return path to the depot snapshot file for an appid."""
+    from paths import data_path
+    depots_dir = os.path.join(os.path.dirname(data_path("x")), "depots")
+    os.makedirs(depots_dir, exist_ok=True)
+    return os.path.join(depots_dir, f"{appid}.json")
 
+
+async def _fetch_steamcmd_manifests(appid: int) -> dict:
+    """Fetch public manifest IDs from SteamCMD API. Returns {depot_id: manifest_gid}."""
+    client = await ensure_http_client("UpdateCheck")
+    resp = await client.get(
+        f"https://api.steamcmd.net/v1/info/{appid}",
+        timeout=10,
+    )
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"SteamCMD API error ({resp.status_code})")
+
+    data = resp.json()
+    if data.get("status") != "success":
+        raise RuntimeError("SteamCMD API returned failure")
+
+    app_data = data.get("data", {}).get(str(appid), {})
+    depots_data = app_data.get("depots", {})
+
+    result = {}
+    for depot_id, depot_info in depots_data.items():
+        if not depot_id.isdigit():
+            continue
+        manifests = depot_info.get("manifests", {})
+        public_manifest = manifests.get("public", {})
+        gid = public_manifest.get("gid") if isinstance(public_manifest, dict) else str(public_manifest) if public_manifest else None
+        if gid:
+            result[depot_id] = str(gid)
+
+    return result
+
+
+async def save_depot_snapshot(appid: int) -> dict:
+    """Save current SteamCMD public manifests as the known-installed version for an appid."""
+    try:
+        appid = int(appid)
+        remote = await _fetch_steamcmd_manifests(appid)
+        if not remote:
+            return {"success": False, "error": "No depot data from SteamCMD"}
+
+        path = _depot_snapshot_path(appid)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"appid": appid, "manifests": remote}, f)
+        logger.info(f"DeckTools: Saved depot snapshot for {appid} ({len(remote)} depots)")
+        return {"success": True}
+    except Exception as e:
+        logger.warning(f"DeckTools: Failed to save depot snapshot for {appid}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def check_game_update(appid: int) -> dict:
+    """Check if a game has an update by comparing saved depot snapshot with SteamCMD public API."""
     try:
         appid = int(appid)
     except Exception:
         return {"success": False, "error": "Invalid appid"}
 
     try:
-        # 1. Read local manifest IDs from installed lua
-        from steam_utils import detect_steam_install_path
-        from downloads import _parse_lua_depots
-        steam_path = detect_steam_install_path()
-        if not steam_path:
-            return {"success": False, "error": "Steam not found"}
+        # 1. Read saved snapshot (created after last download)
+        snapshot_path = _depot_snapshot_path(appid)
+        if not os.path.exists(snapshot_path):
+            # No snapshot yet — create one from current SteamCMD data so future checks work
+            save_result = await save_depot_snapshot(appid)
+            if save_result.get("success"):
+                return {
+                    "success": True,
+                    "updateAvailable": False,
+                    "message": "Baseline snapshot created. Check again later for updates.",
+                }
+            return {"success": False, "error": "No update baseline. Re-download the game first."}
 
-        lua_path = os.path.join(steam_path, "config", "stplug-in", f"{appid}.lua")
-        if not os.path.exists(lua_path):
-            lua_path = lua_path + ".disabled"
-        if not os.path.exists(lua_path):
-            return {"success": False, "error": "Game not installed (no lua file)"}
+        with open(snapshot_path, "r", encoding="utf-8") as f:
+            snapshot = json.loads(f.read())
+        local_manifests = snapshot.get("manifests", {})
 
-        local_depots = _parse_lua_depots(lua_path)
-        if not local_depots:
-            return {"success": False, "error": "Could not parse local depot info"}
-
-        local_manifests = {str(d["depot"]): d["manifest"] for d in local_depots if "manifest" in d}
         if not local_manifests:
-            return {"success": False, "error": "No manifest IDs found in lua file"}
+            return {"success": False, "error": "Empty depot snapshot"}
 
-        # 2. Download latest manifest ZIP from Morrenus
-        key = _get_morrenus_key()
-        if not key:
-            return {"success": False, "error": "Morrenus API key not configured"}
+        # 2. Query SteamCMD for current public manifests
+        remote_manifests = await _fetch_steamcmd_manifests(appid)
 
-        client = await ensure_http_client("UpdateCheck")
-        resp = await client.get(
-            f"https://manifest.morrenus.xyz/api/v1/manifest/{appid}",
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=30,
-        )
-
-        if resp.status_code == 404:
-            return {"success": False, "error": "Game not found on Morrenus"}
-        elif resp.status_code == 429:
-            return {"success": False, "error": "Daily API limit exceeded"}
-        elif resp.status_code != 200:
-            return {"success": False, "error": f"Morrenus API error ({resp.status_code})"}
-
-        # 3. Extract lua from ZIP and parse manifest IDs
-        zip_data = resp.content
-        remote_manifests = {}
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-                tmp.write(zip_data)
-                tmp_path = tmp.name
-
-            with zipfile.ZipFile(tmp_path, "r") as zf:
-                for name in zf.namelist():
-                    if name.endswith(".lua"):
-                        lua_content = zf.read(name).decode("utf-8", errors="ignore")
-                        for m in re.finditer(r'setManifestid\(\s*(\d+)\s*,\s*"(\d+)"', lua_content):
-                            remote_manifests[m.group(1)] = m.group(2)
-                        break
-
-            os.unlink(tmp_path)
-        except Exception as e:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-            return {"success": False, "error": f"Failed to parse remote manifest: {e}"}
-
-        if not remote_manifests:
-            return {"success": False, "error": "Could not extract manifest IDs from Morrenus"}
-
-        # 4. Compare
+        # 3. Compare saved vs current
         update_available = False
         changes = []
         for depot_id, local_mid in local_manifests.items():
             remote_mid = remote_manifests.get(depot_id)
-            if remote_mid and remote_mid != local_mid:
+            if remote_mid and str(local_mid) != str(remote_mid):
                 update_available = True
                 changes.append({"depot": depot_id, "local": local_mid, "remote": remote_mid})
-
-        # Check for new depots
-        for depot_id in remote_manifests:
-            if depot_id not in local_manifests:
-                update_available = True
-                changes.append({"depot": depot_id, "local": None, "remote": remote_manifests[depot_id]})
 
         return {
             "success": True,

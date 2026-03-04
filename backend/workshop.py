@@ -107,10 +107,7 @@ async def _run_depot_downloader_workshop(appid: str, pubfile_id: str, download_d
         while True:
             line = await process.stdout.readline()
             if not line:
-                if process.returncode is not None:
-                    break
-                await asyncio.sleep(0.1)
-                continue
+                break  # EOF — stdout closed, process finishing
             clean_line = line.decode("utf-8", errors="replace").strip()
             if clean_line:
                 output_log.append(clean_line.lower())

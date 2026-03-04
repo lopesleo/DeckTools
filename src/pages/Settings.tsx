@@ -7,6 +7,7 @@ import {
   ToggleField,
   Navigation,
 } from "@decky/ui";
+import { toaster } from "@decky/api";
 import {
   saveRyuCookie,
   loadRyuCookie,
@@ -20,17 +21,20 @@ import {
   getSlsPlayStatus,
   setSlsPlayStatus,
 } from "../api";
-import { getLanguage, setLanguage } from "../i18n";
+import { useT, getLanguage, setLanguage } from "../i18n";
 
 export function Settings() {
+  const t = useT();
   const [ryuCookie, setRyuCookie] = useState("");
   const [morrenusKey, setMorrenusKey] = useState("");
-  const [message, setMessage] = useState("");
   const [deps, setDeps] = useState<any>(null);
   const [platform, setPlatform] = useState<any>(null);
   const [playNotOwned, setPlayNotOwned] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [lang, setLang] = useState(getLanguage());
+
+  const toast = (title: string, body?: string, duration = 3000) =>
+    toaster.toast({ title, body: body || "", duration });
 
   useEffect(() => {
     const load = async () => {
@@ -58,42 +62,54 @@ export function Settings() {
 
   const handleSaveCookie = async () => {
     const result = await saveRyuCookie(ryuCookie);
-    setMessage(result.message || result.error || "");
+    if (result.success || result.message) {
+      toast(t("toastCookieSaved"));
+    } else {
+      toast(t("toastError"), result.error || "", 4000);
+    }
   };
 
   const handleSaveMorrenusKey = async () => {
     const result = await updateMorrenusKey(morrenusKey);
-    setMessage(result.message || result.error || "");
+    if (result.success || result.message) {
+      toast(t("toastApiKeySaved"));
+    } else {
+      toast(t("toastError"), result.error || "", 4000);
+    }
   };
 
   const handleUpdateApis = async () => {
-    setMessage("Updating APIs...");
+    toast(t("updatingApis"), "", 2000);
     const result = await fetchFreeApisNow();
     if (result.success) {
-      setMessage(`Updated: ${result.count} APIs loaded`);
+      toast(t("toastApisUpdated", result.count));
     } else {
-      setMessage(result.error || "Update failed");
+      toast(t("toastError"), result.error || t("updateFailed"), 4000);
     }
   };
 
   const handleInstallDeps = async () => {
     setInstalling(true);
-    setMessage("Installing dependencies...");
+    toast(t("installingDeps"), "", 2000);
     await installDependencies();
     const result = await checkDependencies();
     if (result.success) setDeps(result);
     setInstalling(false);
-    setMessage("Installation complete. Check status below.");
+    toast(t("toastDepsInstalled"));
   };
 
   const handleVerifyInjection = async () => {
     const result = await verifySlssteamInjected();
     if (result.already_ok) {
-      setMessage("SLSsteam injection: OK");
+      toast(t("toastInjectionOk"));
     } else if (result.patched) {
-      setMessage("SLSsteam injection: Patched steam.sh");
+      toast(t("toastInjectionPatched"));
     } else {
-      setMessage(`SLSsteam injection: ${result.error || "Failed"}`);
+      toast(
+        t("toastError"),
+        `${t("slssteamInjection")}: ${result.error || "Failed"}`,
+        4000,
+      );
     }
   };
 
@@ -104,10 +120,10 @@ export function Settings() {
 
   return (
     <>
-      <PanelSection title="API Credentials">
+      <PanelSection title={t("apiCredentials")}>
         <PanelSectionRow>
           <TextField
-            label="Ryuu Cookie"
+            label={t("ryuCookie")}
             value={ryuCookie}
             onChange={(e: any) => setRyuCookie(e?.target?.value ?? "")}
             bIsPassword
@@ -115,13 +131,13 @@ export function Settings() {
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleSaveCookie}>
-            Save Cookie
+            {t("saveCookie")}
           </ButtonItem>
         </PanelSectionRow>
 
         <PanelSectionRow>
           <TextField
-            label="Morrenus API Key"
+            label={t("morrenusApiKey")}
             value={morrenusKey}
             onChange={(e: any) => setMorrenusKey(e?.target?.value ?? "")}
             bIsPassword
@@ -129,35 +145,35 @@ export function Settings() {
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleSaveMorrenusKey}>
-            Save Morrenus Key
+            {t("saveMorrenusKey")}
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
 
-      <PanelSection title="APIs">
+      <PanelSection title={t("apis")}>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleUpdateApis}>
-            Update Free APIs
+            {t("updateFreeApis")}
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
 
-      <PanelSection title="SLSsteam">
+      <PanelSection title={t("slssteam")}>
         <PanelSectionRow>
           <ToggleField
-            label="Play Not Owned Games"
+            label={t("playNotOwnedGames")}
             checked={playNotOwned}
             onChange={handleTogglePlayNotOwned}
           />
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleVerifyInjection}>
-            Verify SLSsteam Injection
+            {t("verifySlssteamInjection")}
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
 
-      <PanelSection title="Dependencies">
+      <PanelSection title={t("dependencies")}>
         {deps && (
           <>
             <PanelSectionRow>
@@ -168,7 +184,9 @@ export function Settings() {
                 }}
               >
                 ACCELA:{" "}
-                {deps.accela ? `Installed (${deps.accelaPath})` : "Not found"}
+                {deps.accela
+                  ? `${t("installed")} (${deps.accelaPath})`
+                  : t("notFound")}
               </div>
             </PanelSectionRow>
             <PanelSectionRow>
@@ -180,8 +198,8 @@ export function Settings() {
               >
                 SLSsteam:{" "}
                 {deps.slssteam
-                  ? `Installed (${deps.slssteamPath})`
-                  : "Not found"}
+                  ? `${t("installed")} (${deps.slssteamPath})`
+                  : t("notFound")}
               </div>
             </PanelSectionRow>
             <PanelSectionRow>
@@ -191,7 +209,7 @@ export function Settings() {
                   color: deps.dotnet ? "#00cc00" : "#ff4444",
                 }}
               >
-                .NET Runtime: {deps.dotnet ? "Available" : "Not found"}
+                .NET Runtime: {deps.dotnet ? t("installed") : t("notFound")}
               </div>
             </PanelSectionRow>
           </>
@@ -202,12 +220,12 @@ export function Settings() {
             onClick={handleInstallDeps}
             disabled={installing}
           >
-            {installing ? "Installing..." : "Install / Reinstall Dependencies"}
+            {installing ? t("installing") : t("installReinstallDeps")}
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
 
-      <PanelSection title="Language / Idioma">
+      <PanelSection title={t("languageIdioma")}>
         <PanelSectionRow>
           <ButtonItem
             layout="below"
@@ -221,33 +239,19 @@ export function Settings() {
           </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
-          <div style={{ fontSize: "11px", color: "#8b929a", textAlign: "center" }}>
-            {lang === "en" ? "Current: English" : "Atual: Português (BR)"}
+          <div
+            style={{ fontSize: "11px", color: "#8b929a", textAlign: "center" }}
+          >
+            {lang === "en" ? t("currentEnglish") : t("currentPortuguese")}
           </div>
         </PanelSectionRow>
       </PanelSection>
 
       {platform && (
-        <PanelSection title="Platform">
+        <PanelSection title={t("platform")}>
           <PanelSectionRow>
             <div style={{ fontSize: "11px", color: "#8b929a" }}>
-              Steam: {platform.steam_root || "Not found"}
-            </div>
-          </PanelSectionRow>
-        </PanelSection>
-      )}
-
-      {message && (
-        <PanelSection>
-          <PanelSectionRow>
-            <div
-              style={{
-                fontSize: "12px",
-                color: "#dcdedf",
-                textAlign: "center",
-              }}
-            >
-              {message}
+              Steam: {platform.steam_root || t("notFound")}
             </div>
           </PanelSectionRow>
         </PanelSection>
@@ -255,7 +259,7 @@ export function Settings() {
 
       <PanelSection>
         <ButtonItem layout="below" onClick={() => Navigation.NavigateBack()}>
-          Back
+          {t("back")}
         </ButtonItem>
       </PanelSection>
     </>

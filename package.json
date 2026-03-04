@@ -1,5 +1,5 @@
 {
-  "name": "quickaccela",
+  "name": "decktools",
   "version": "0.1.0",
   "description": "Decky Loader plugin for game library and configuration management on Steam Deck",
   "type": "module",

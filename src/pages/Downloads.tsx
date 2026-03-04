@@ -6,6 +6,7 @@ import {
   TextField,
   Navigation,
 } from "@decky/ui";
+import { toaster } from "@decky/api";
 import { ProgressBar } from "../components/ProgressBar";
 import {
   getDownloadStatus,
@@ -15,6 +16,7 @@ import {
   cancelWorkshopDownload,
   startDownload,
 } from "../api";
+import { useT } from "../i18n";
 
 interface ActiveDownload {
   appid: number;
@@ -26,17 +28,33 @@ interface ActiveDownload {
 }
 
 export function Downloads() {
+  const t = useT();
   const [downloads, setDownloads] = useState<ActiveDownload[]>([]);
   const [workshopState, setWorkshopState] = useState<any>(null);
   const [manualAppId, setManualAppId] = useState("");
   const [workshopAppId, setWorkshopAppId] = useState("");
   const [workshopPubfileId, setWorkshopPubfileId] = useState("");
-  const [message, setMessage] = useState("");
+
+  const toast = (title: string, body?: string, duration = 3000) =>
+    toaster.toast({ title, body: body || "", duration });
+
+  const statusLabel = (status: string): string => {
+    if (status === "downloading") return t("statusDownloading");
+    if (status === "checking") return t("statusChecking");
+    if (status === "processing") return t("statusProcessing");
+    if (status === "configuring") return t("statusConfiguring");
+    if (status === "depot_download") return t("statusDownloadingGame");
+    if (status === "installing") return t("statusInstalling");
+    if (status === "queued") return t("statusQueued");
+    if (status === "done") return t("downloadComplete");
+    if (status === "failed") return t("downloadFailed");
+    if (status === "cancelled") return t("downloadCancelled");
+    return status;
+  };
 
   // Poll active downloads
   useEffect(() => {
     const interval = setInterval(async () => {
-      // Poll workshop status
       const ws = await getWorkshopDownloadStatus();
       if (ws && ws.status !== "idle") {
         setWorkshopState(ws);
@@ -50,10 +68,9 @@ export function Downloads() {
   const handleManualDownload = async () => {
     const appid = parseInt(manualAppId, 10);
     if (!appid || isNaN(appid)) {
-      setMessage("Enter a valid AppID");
+      toast(t("toastError"), t("enterValidAppId"), 3000);
       return;
     }
-    setMessage("");
     const result = await startDownload(appid);
     if (result.success) {
       setDownloads((prev: ActiveDownload[]) => [
@@ -61,8 +78,9 @@ export function Downloads() {
         { appid, status: "queued", bytesRead: 0, totalBytes: 0 },
       ]);
       setManualAppId("");
+      toast(t("toastDownloadStarted"), `AppID: ${appid}`, 2000);
     } else {
-      setMessage(result.error || "Failed");
+      toast(t("toastError"), result.error || t("downloadFailed"), 4000);
     }
   };
 
@@ -70,19 +88,19 @@ export function Downloads() {
     const appid = parseInt(workshopAppId, 10);
     const pubfileId = parseInt(workshopPubfileId, 10);
     if (!appid || !pubfileId || isNaN(appid) || isNaN(pubfileId)) {
-      setMessage("Enter valid AppID and Workshop Item ID");
+      toast(t("toastError"), t("enterValidIds"), 3000);
       return;
     }
-    setMessage("");
     const result = await startWorkshopDownload(appid, pubfileId);
     if (result.success) {
       setWorkshopState({
         status: "downloading",
         progress: 0,
-        message: "Starting...",
+        message: t("startingDownload"),
       });
+      toast(t("toastDownloadStarted"), `Workshop ${pubfileId}`, 2000);
     } else {
-      setMessage(result.error || "Failed");
+      toast(t("toastError"), result.error || t("downloadFailed"), 4000);
     }
   };
 
@@ -111,7 +129,7 @@ export function Downloads() {
 
   return (
     <>
-      <PanelSection title="Manual Download">
+      <PanelSection title={t("manualDownload")}>
         <PanelSectionRow>
           <TextField
             label="AppID"
@@ -121,19 +139,19 @@ export function Downloads() {
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleManualDownload}>
-            Download Manifest
+            {t("downloadManifest")}
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
 
       {/* Active Downloads */}
       {downloads.length > 0 && (
-        <PanelSection title="Active Downloads">
+        <PanelSection title={t("activeDownloads")}>
           {downloads.map((d: ActiveDownload) => (
             <PanelSectionRow key={d.appid}>
               <div>
                 <div style={{ fontSize: "13px", color: "#dcdedf" }}>
-                  AppID: {d.appid} — {d.status}
+                  AppID: {d.appid} — {statusLabel(d.status)}
                 </div>
                 {d.currentApi && (
                   <div style={{ fontSize: "11px", color: "#8b929a" }}>
@@ -162,7 +180,7 @@ export function Downloads() {
                       );
                     }}
                   >
-                    Cancel
+                    {t("cancel")}
                   </ButtonItem>
                 )}
               </div>
@@ -172,7 +190,7 @@ export function Downloads() {
       )}
 
       {/* Workshop Download */}
-      <PanelSection title="Workshop Download">
+      <PanelSection title={t("workshopDownload")}>
         <PanelSectionRow>
           <TextField
             label="AppID"
@@ -182,21 +200,21 @@ export function Downloads() {
         </PanelSectionRow>
         <PanelSectionRow>
           <TextField
-            label="Workshop Item ID"
+            label={t("workshopItemId")}
             value={workshopPubfileId}
             onChange={(e: any) => setWorkshopPubfileId(e?.target?.value ?? "")}
           />
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleWorkshopDownload}>
-            Download Workshop Item
+            {t("downloadWorkshopItem")}
           </ButtonItem>
         </PanelSectionRow>
         {workshopState && (
           <>
             <PanelSectionRow>
               <div style={{ fontSize: "12px", color: "#dcdedf" }}>
-                {workshopState.message || workshopState.status}
+                {workshopState.message || statusLabel(workshopState.status)}
               </div>
             </PanelSectionRow>
             {workshopState.progress > 0 &&
@@ -205,14 +223,14 @@ export function Downloads() {
                   <ProgressBar
                     value={workshopState.progress}
                     max={100}
-                    label="Workshop"
+                    label={t("workshopDownload")}
                   />
                 </PanelSectionRow>
               )}
             {workshopState.status === "downloading" && (
               <PanelSectionRow>
                 <ButtonItem layout="below" onClick={handleCancelWorkshop}>
-                  Cancel Workshop Download
+                  {t("cancelWorkshopDownload")}
                 </ButtonItem>
               </PanelSectionRow>
             )}
@@ -220,25 +238,9 @@ export function Downloads() {
         )}
       </PanelSection>
 
-      {message && (
-        <PanelSection>
-          <PanelSectionRow>
-            <div
-              style={{
-                fontSize: "12px",
-                color: "#dcdedf",
-                textAlign: "center",
-              }}
-            >
-              {message}
-            </div>
-          </PanelSectionRow>
-        </PanelSection>
-      )}
-
       <PanelSection>
         <ButtonItem layout="below" onClick={() => Navigation.NavigateBack()}>
-          Back
+          {t("back")}
         </ButtonItem>
       </PanelSection>
     </>

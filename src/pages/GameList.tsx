@@ -16,6 +16,7 @@ import {
   searchMorrenus,
 } from "../api";
 import { ROUTE_GAME_DETAIL, ROUTE_SETTINGS, ROUTE_DOWNLOADS } from "../routes";
+import { useT } from "../i18n";
 
 interface SearchResult {
   appid: number;
@@ -23,12 +24,14 @@ interface SearchResult {
 }
 
 export function GameList() {
+  const t = useT();
   const [games, setGames] = useState<GameInfo[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [addAppId, setAddAppId] = useState("");
   const [addStatus, setAddStatus] = useState("");
   const [activeDownloadId, setActiveDownloadId] = useState<number | null>(null);
+  const [activeDownloadPhase, setActiveDownloadPhase] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [sortMode, setSortMode] = useState<"name" | "appid" | "recent">("name");
 
@@ -40,7 +43,6 @@ export function GameList() {
 
   const loadGames = useCallback(async () => {
     try {
-      // Only show games added via ACCELA (with lua scripts)
       const luaResult = await getInstalledLuaScripts();
       const gameList: GameInfo[] = [];
 
@@ -51,12 +53,12 @@ export function GameList() {
             name: s.gameName || `Unknown (${s.appid})`,
             hasLua: true,
             isDisabled: s.isDisabled,
+            hasGameFiles: s.hasGameFiles,
           });
         }
       }
 
       gameList.sort((a, b) => a.name.localeCompare(b.name));
-
       setGames(gameList);
     } catch (err) {
       console.error("GameList: load error", err);
@@ -65,115 +67,112 @@ export function GameList() {
     }
   }, []);
 
-  // Format download status from backend state
-  const formatStatus = useCallback((st: any): string => {
-    const phase = st.status || "unknown";
-    if (phase === "downloading") {
-      const total = st.totalBytes || 0;
-      const read = st.bytesRead || 0;
-      if (total > 0) {
-        const pct = Math.round((read / total) * 100);
-        return `Downloading... ${pct}%`;
-      }
-      const kb = Math.round(read / 1024);
-      return `Downloading... ${kb} KB`;
-    } else if (phase === "checking") {
-      return `Checking ${st.currentApi || "APIs"}...`;
-    } else if (phase === "processing") {
-      return "Processing manifest...";
-    } else if (phase === "configuring") {
-      return "Configuring SLSsteam...";
-    } else if (phase === "depot_download") {
-      return `Downloading game: ${st.depotProgress || "Downloading game files..."}`;
-    } else if (phase === "installing") {
-      return "Installing...";
-    } else if (phase === "queued") {
-      return "Starting download...";
-    }
-    return `${phase}...`;
-  }, []);
-
-  // Start polling for a given appid
-  const startPolling = useCallback((id: number) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    setActiveDownloadId(id);
-
-    pollRef.current = setInterval(async () => {
-      try {
-        const status = await getDownloadStatus(id);
-        if (!status.success || !status.state) return;
-        const st = status.state;
-        const phase = st.status || "unknown";
-
-        if (phase === "done") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          pollRef.current = null;
-          setAddStatus("Done! Restart Steam to see the game.");
-          setActiveDownloadId(null);
-          loadGames();
-          setTimeout(() => setAddStatus(""), 6000);
-        } else if (phase === "failed") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          pollRef.current = null;
-          setAddStatus(st.error || "Download failed");
-          setActiveDownloadId(null);
-        } else if (phase === "cancelled") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          pollRef.current = null;
-          setAddStatus("Download cancelled");
-          setActiveDownloadId(null);
-        } else {
-          setAddStatus(formatStatus(st));
+  const formatStatus = useCallback(
+    (st: any): string => {
+      const phase = st.status || "unknown";
+      if (phase === "downloading") {
+        const total = st.totalBytes || 0;
+        const read = st.bytesRead || 0;
+        if (total > 0) {
+          const pct = Math.round((read / total) * 100);
+          return `${t("statusDownloading")} ${pct}%`;
         }
-      } catch {
-        // ignore poll errors
+        const kb = Math.round(read / 1024);
+        return `${t("statusDownloading")} ${kb} KB`;
+      } else if (phase === "checking") {
+        return `${t("statusChecking")} ${st.currentApi || "APIs"}...`;
+      } else if (phase === "processing") {
+        return t("statusProcessing");
+      } else if (phase === "configuring") {
+        return t("statusConfiguring");
+      } else if (phase === "depot_download") {
+        return `${t("statusDownloadingGame")}: ${st.depotProgress || t("statusDownloadingGameFiles")}`;
+      } else if (phase === "installing") {
+        return t("statusInstalling");
+      } else if (phase === "queued") {
+        return t("statusQueued");
       }
-    }, 500);
+      return `${phase}...`;
+    },
+    [t],
+  );
 
-    // Safety timeout: stop polling after 60 minutes
-    setTimeout(() => {
+  const startPolling = useCallback(
+    (id: number) => {
       if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = null;
-    }, 3600000);
-  }, [formatStatus, loadGames]);
+      setActiveDownloadId(id);
 
-  // Cleanup polling on unmount
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await getDownloadStatus(id);
+          if (!status.success || !status.state) return;
+          const st = status.state;
+          const phase = st.status || "unknown";
+
+          if (phase === "done") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            setAddStatus(t("doneRestartSteam"));
+            setActiveDownloadId(null);
+            setActiveDownloadPhase("");
+            loadGames();
+            setTimeout(() => setAddStatus(""), 6000);
+          } else if (phase === "failed") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            setAddStatus(st.error || t("downloadFailed"));
+            setActiveDownloadId(null);
+            setActiveDownloadPhase("");
+          } else if (phase === "cancelled") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            setAddStatus(t("downloadCancelled"));
+            setActiveDownloadId(null);
+            setActiveDownloadPhase("");
+          } else {
+            setAddStatus(formatStatus(st));
+            setActiveDownloadPhase(phase);
+          }
+        } catch {
+          // ignore poll errors
+        }
+      }, 500);
+
+      setTimeout(() => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+      }, 3600000);
+    },
+    [formatStatus, loadGames, t],
+  );
+
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
 
-  // On mount: check for active downloads and resume polling + auto-detect appid
   useEffect(() => {
     loadGames();
 
-    // Auto-detect AppID: prioritize Steam Store page (CEF), fallback to library route
     const detectAppId = async () => {
-      // 1. Check CEF pages for store or library URLs (backend query)
       try {
         const result = await detectStoreAppid();
         if (result.success && result.appid) {
           setAddAppId(String(result.appid));
           return;
         }
-      } catch {
-        // ignore
-      }
-      // 2. Fallback: check window.location for library route
+      } catch {}
       try {
         const path = window.location.pathname || "";
         const match = path.match(/\/library\/app\/(\d+)/);
         if (match) {
           setAddAppId(match[1]);
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
     detectAppId();
 
-    // Re-detect when panel becomes visible (QAM reopen)
     const onVisibility = () => {
       if (document.visibilityState === "visible") detectAppId();
     };
@@ -182,7 +181,6 @@ export function GameList() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
 
-    // Resume active downloads
     (async () => {
       try {
         const result = await getActiveDownloads();
@@ -195,9 +193,7 @@ export function GameList() {
             startPolling(id);
           }
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     })();
 
     return () => cleanup1();
@@ -206,26 +202,26 @@ export function GameList() {
   const handleAddGame = async () => {
     const id = parseInt(addAppId.trim(), 10);
     if (!id || id <= 0) {
-      setAddStatus("Invalid AppID");
+      setAddStatus(t("invalidAppId"));
       return;
     }
-    setAddStatus("Starting download...");
+    setAddStatus(t("startingDownload"));
     try {
       const result = await startDownload(id);
       if (!result.success) {
-        setAddStatus(result.error || "Download failed");
+        setAddStatus(result.error || t("downloadFailed"));
         return;
       }
       setAddAppId("");
       startPolling(id);
     } catch (err: any) {
-      setAddStatus("Error: " + (err?.message || String(err)));
+      setAddStatus(`${t("error")}: ${err?.message || String(err)}`);
     }
   };
 
   const handleSearchMorrenus = async () => {
     if (searchQuery.trim().length < 2) {
-      setSearchError("Enter at least 2 characters");
+      setSearchError(t("enterAtLeast2Chars"));
       return;
     }
     setSearching(true);
@@ -236,13 +232,13 @@ export function GameList() {
       if (result.success) {
         setSearchResults(result.results || []);
         if ((result.results || []).length === 0) {
-          setSearchError("No games found");
+          setSearchError(t("noGamesFound"));
         }
       } else {
-        setSearchError(result.error || "Search failed");
+        setSearchError(result.error || t("searchFailed"));
       }
     } catch (err: any) {
-      setSearchError("Error: " + (err?.message || String(err)));
+      setSearchError(`${t("error")}: ${err?.message || String(err)}`);
     } finally {
       setSearching(false);
     }
@@ -252,10 +248,14 @@ export function GameList() {
     setAddAppId(String(result.appid));
     setSearchResults([]);
     setSearchQuery("");
-    setAddStatus(`Selected: ${result.name} (${result.appid})`);
+    setAddStatus(`${t("selected")}: ${result.name} (${result.appid})`);
   };
 
-  const sortLabels: Record<string, string> = { name: "A-Z", appid: "AppID", recent: "Recent" };
+  const sortLabels: Record<string, string> = {
+    name: "A-Z",
+    appid: "AppID",
+    recent: "Recent",
+  };
 
   const cycleSortMode = () => {
     setSortMode((prev) => {
@@ -265,18 +265,21 @@ export function GameList() {
     });
   };
 
-  const filtered = (search
-    ? games.filter(
-        (g: GameInfo) =>
-          g.name.toLowerCase().includes(search.toLowerCase()) ||
-          String(g.appid).includes(search),
-      )
-    : games
-  ).slice().sort((a, b) => {
-    if (sortMode === "appid") return a.appid - b.appid;
-    if (sortMode === "recent") return b.appid - a.appid;
-    return a.name.localeCompare(b.name);
-  });
+  const filtered = (
+    search
+      ? games.filter(
+          (g: GameInfo) =>
+            g.name.toLowerCase().includes(search.toLowerCase()) ||
+            String(g.appid).includes(search),
+        )
+      : games
+  )
+    .slice()
+    .sort((a, b) => {
+      if (sortMode === "appid") return a.appid - b.appid;
+      if (sortMode === "recent") return b.appid - a.appid;
+      return a.name.localeCompare(b.name);
+    });
 
   const navigateToDetail = (appid: number) => {
     Navigation.Navigate(ROUTE_GAME_DETAIL + "/" + appid);
@@ -284,17 +287,17 @@ export function GameList() {
 
   return (
     <>
-      <PanelSection title="Add Game">
+      <PanelSection title={t("addGame")}>
         <PanelSectionRow>
           <TextField
-            label="Steam AppID"
+            label={t("steamAppId")}
             value={addAppId}
             onChange={(e: any) => setAddAppId(e?.target?.value ?? "")}
           />
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleAddGame}>
-            Download Manifest
+            {t("downloadManifest")}
           </ButtonItem>
         </PanelSectionRow>
         {addStatus && (
@@ -303,9 +306,12 @@ export function GameList() {
               style={{
                 textAlign: "center",
                 padding: "6px",
-                color: addStatus.startsWith("Error") || addStatus === "Invalid AppID" || addStatus === "Download failed"
-                  ? "#ff6b6b"
-                  : "#8bca68",
+                color:
+                  addStatus.startsWith(t("error")) ||
+                  addStatus === t("invalidAppId") ||
+                  addStatus === t("downloadFailed")
+                    ? "#ff6b6b"
+                    : "#8bca68",
                 fontSize: "12px",
               }}
             >
@@ -316,22 +322,33 @@ export function GameList() {
       </PanelSection>
 
       {/* Morrenus Search */}
-      <PanelSection title="Search by Name">
+      <PanelSection title={t("searchByName")}>
         <PanelSectionRow>
           <TextField
-            label="Game name"
+            label={t("gameName")}
             value={searchQuery}
             onChange={(e: any) => setSearchQuery(e?.target?.value ?? "")}
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={handleSearchMorrenus} disabled={searching}>
-            {searching ? "Searching..." : "Search Morrenus"}
+          <ButtonItem
+            layout="below"
+            onClick={handleSearchMorrenus}
+            disabled={searching}
+          >
+            {searching ? t("searching") : t("searchMorrenus")}
           </ButtonItem>
         </PanelSectionRow>
         {searchError && (
           <PanelSectionRow>
-            <div style={{ textAlign: "center", padding: "4px", color: "#ff6b6b", fontSize: "12px" }}>
+            <div
+              style={{
+                textAlign: "center",
+                padding: "4px",
+                color: "#ff6b6b",
+                fontSize: "12px",
+              }}
+            >
               {searchError}
             </div>
           </PanelSectionRow>
@@ -339,8 +356,14 @@ export function GameList() {
         {searchResults.length > 0 && (
           <>
             <PanelSectionRow>
-              <div style={{ fontSize: "11px", color: "#8b929a", textAlign: "center" }}>
-                {searchResults.length} results — tap to select
+              <div
+                style={{
+                  fontSize: "11px",
+                  color: "#8b929a",
+                  textAlign: "center",
+                }}
+              >
+                {searchResults.length} {t("results")}
               </div>
             </PanelSectionRow>
             {searchResults.slice(0, 15).map((r: SearchResult) => (
@@ -356,8 +379,14 @@ export function GameList() {
             ))}
             {searchResults.length > 15 && (
               <PanelSectionRow>
-                <div style={{ fontSize: "11px", color: "#8b929a", textAlign: "center" }}>
-                  +{searchResults.length - 15} more results — refine your search
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: "#8b929a",
+                    textAlign: "center",
+                  }}
+                >
+                  +{searchResults.length - 15} {t("moreResults")}
                 </div>
               </PanelSectionRow>
             )}
@@ -365,17 +394,17 @@ export function GameList() {
         )}
       </PanelSection>
 
-      <PanelSection title="My Games">
+      <PanelSection title={t("myGames")}>
         <PanelSectionRow>
           <TextField
-            label="Search"
+            label={t("searchByName")}
             value={search}
             onChange={(e: any) => setSearch(e?.target?.value ?? "")}
           />
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={cycleSortMode}>
-            Sort: {sortLabels[sortMode]}
+            {t("sort")}: {sortLabels[sortMode]}
           </ButtonItem>
         </PanelSectionRow>
 
@@ -384,7 +413,7 @@ export function GameList() {
             <div
               style={{ textAlign: "center", padding: "20px", color: "#8b929a" }}
             >
-              Loading games...
+              {t("loadingGames")}
             </div>
           </PanelSectionRow>
         ) : filtered.length === 0 ? (
@@ -392,12 +421,20 @@ export function GameList() {
             <div
               style={{ textAlign: "center", padding: "20px", color: "#8b929a" }}
             >
-              {search ? "No games match your search" : "No ACCELA games yet"}
+              {search ? t("noGamesMatch") : t("noGamesYet")}
             </div>
           </PanelSectionRow>
         ) : (
           filtered.map((game: GameInfo) => (
-            <GameCard key={game.appid} game={game} onClick={navigateToDetail} />
+            <GameCard
+              key={game.appid}
+              game={
+                activeDownloadId === game.appid
+                  ? { ...game, downloadStatus: activeDownloadPhase }
+                  : game
+              }
+              onClick={navigateToDetail}
+            />
           ))
         )}
       </PanelSection>
@@ -408,7 +445,7 @@ export function GameList() {
             layout="below"
             onClick={() => Navigation.Navigate(ROUTE_DOWNLOADS)}
           >
-            Active Downloads
+            {t("activeDownloads")}
           </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
@@ -416,12 +453,12 @@ export function GameList() {
             layout="below"
             onClick={() => Navigation.Navigate(ROUTE_SETTINGS)}
           >
-            Settings
+            {t("settings")}
           </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={() => loadGames()}>
-            Refresh
+            {t("refresh")}
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>

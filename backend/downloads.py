@@ -511,7 +511,13 @@ async def _determine_install_dir(appid: int, game_name: str) -> str:
 # DepotDownloader integration — download actual game files
 # ---------------------------------------------------------------------------
 
-# DepotDownloaderMod DLL search paths
+# DepotDownloaderMod executable search paths (self-contained build)
+_DDM_EXE_SEARCH_PATHS = [
+    "/home/deck/.local/share/QuickAccela/deps/DepotDownloaderMod",
+    "/home/deck/.local/share/ACCELA/deps/DepotDownloaderMod",
+]
+
+# DepotDownloaderMod DLL search paths (framework-dependent build)
 _DDM_DLL_SEARCH_PATHS = [
     "/home/deck/.local/share/QuickAccela/deps/DepotDownloaderMod.dll",
     "/home/deck/.local/share/ACCELA/deps/DepotDownloaderMod.dll",
@@ -538,31 +544,78 @@ def _find_dotnet() -> str:
     return ""
 
 
-def _find_depot_downloader_dll() -> str:
-    """Find DepotDownloaderMod.dll (a .NET DLL, not an executable)."""
-    # Check custom workshop tool path for DLL
+def _find_ddm_executable() -> tuple[list[str], str]:
+    """Find DepotDownloaderMod and return (cmd_prefix, description).
+
+    Tries self-contained executable first (like workshop.py), then dotnet + DLL.
+    Returns ([], "") if not found.
+    """
+    import stat as stat_mod
     from workshop import load_workshop_tool_path
+
+    # 1. Check custom workshop tool path for executable
     custom = load_workshop_tool_path()
     if custom and os.path.exists(custom):
         if os.path.isdir(custom):
-            p = os.path.join(custom, "DepotDownloaderMod.dll")
-            if os.path.exists(p):
-                return p
-        elif os.path.isfile(custom) and custom.endswith(".dll"):
-            return custom
+            exe = os.path.join(custom, "DepotDownloaderMod")
+            if os.path.exists(exe):
+                try:
+                    st = os.stat(exe)
+                    os.chmod(exe, st.st_mode | stat_mod.S_IEXEC)
+                except Exception:
+                    pass
+                return [exe], f"executable: {exe}"
+            dll = os.path.join(custom, "DepotDownloaderMod.dll")
+            if os.path.exists(dll):
+                dotnet = _find_dotnet()
+                if dotnet:
+                    return [dotnet, dll], f"dotnet+dll: {dll}"
+        elif os.path.isfile(custom):
+            if custom.endswith(".dll"):
+                dotnet = _find_dotnet()
+                if dotnet:
+                    return [dotnet, custom], f"dotnet+dll: {custom}"
+            else:
+                try:
+                    st = os.stat(custom)
+                    os.chmod(custom, st.st_mode | stat_mod.S_IEXEC)
+                except Exception:
+                    pass
+                return [custom], f"executable: {custom}"
 
-    # Check known paths
-    for path in _DDM_DLL_SEARCH_PATHS:
+    # 2. Check known executable paths (self-contained)
+    for path in _DDM_EXE_SEARCH_PATHS:
         if os.path.exists(path):
-            return path
+            try:
+                st = os.stat(path)
+                os.chmod(path, st.st_mode | stat_mod.S_IEXEC)
+            except Exception:
+                pass
+            return [path], f"executable: {path}"
 
-    # Plugin backend dir
-    base = os.path.join(get_plugin_dir(), "backend", "deps")
-    bundled = os.path.join(base, "DepotDownloaderMod.dll")
-    if os.path.exists(bundled):
-        return bundled
+    # 3. Plugin backend dir executable
+    base = os.path.join(get_plugin_dir(), "backend")
+    bundled_exe = os.path.join(base, "DepotDownloaderMod")
+    if os.path.exists(bundled_exe):
+        try:
+            st = os.stat(bundled_exe)
+            os.chmod(bundled_exe, st.st_mode | stat_mod.S_IEXEC)
+        except Exception:
+            pass
+        return [bundled_exe], f"executable: {bundled_exe}"
 
-    return _DDM_DLL_SEARCH_PATHS[0]  # return default path even if missing
+    # 4. Check known DLL paths (framework-dependent, needs dotnet)
+    dotnet = _find_dotnet()
+    if dotnet:
+        for path in _DDM_DLL_SEARCH_PATHS:
+            if os.path.exists(path):
+                return [dotnet, path], f"dotnet+dll: {path}"
+
+        bundled_dll = os.path.join(base, "deps", "DepotDownloaderMod.dll")
+        if os.path.exists(bundled_dll):
+            return [dotnet, bundled_dll], f"dotnet+dll: {bundled_dll}"
+
+    return [], ""
 
 
 def _parse_lua_depots(lua_path: str) -> list[dict]:
@@ -598,26 +651,19 @@ def _parse_lua_depots(lua_path: str) -> list[dict]:
 
 
 async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) -> None:
-    """Run DepotDownloaderMod via dotnet to download actual game files."""
+    """Run DepotDownloaderMod to download actual game files."""
     import tempfile
 
-    dotnet_path = _find_dotnet()
-    if not dotnet_path:
-        logger.error("QuickAccela: dotnet runtime not found")
+    cmd_prefix, ddm_desc = _find_ddm_executable()
+    if not cmd_prefix:
+        logger.error("QuickAccela: DepotDownloaderMod not found (no executable or dotnet+dll)")
         _set_download_state(appid, {
             "status": "failed",
-            "error": "dotnet runtime not found. Install .NET 9 runtime.",
+            "error": "DepotDownloaderMod not found. Install ACCELA deps or set workshop tool path.",
         })
         return
 
-    dll_path = _find_depot_downloader_dll()
-    if not os.path.exists(dll_path):
-        logger.error(f"QuickAccela: DepotDownloaderMod.dll not found at {dll_path}")
-        _set_download_state(appid, {
-            "status": "failed",
-            "error": f"DepotDownloaderMod.dll not found at {dll_path}",
-        })
-        return
+    logger.info(f"QuickAccela: Using DDM: {ddm_desc}")
 
     os.makedirs(install_dir, exist_ok=True)
     total_depots = len(depots)
@@ -642,13 +688,16 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
     steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
     depotcache_dir = os.path.join(steam_path, "depotcache")
 
-    # Set up dotnet environment
+    # Set up clean environment (remove Steam runtime vars that break dotnet)
     clean_env = os.environ.copy()
     clean_env.pop("LD_LIBRARY_PATH", None)
     clean_env.pop("LD_PRELOAD", None)
     clean_env.pop("STEAM_RUNTIME", None)
-    dotnet_root = os.path.dirname(dotnet_path)
-    clean_env["DOTNET_ROOT"] = dotnet_root
+    dotnet_path = _find_dotnet()
+    if dotnet_path:
+        clean_env["DOTNET_ROOT"] = os.path.dirname(dotnet_path)
+
+    output_log = []
 
     for idx, depot_info in enumerate(depots):
         depot_id = depot_info["depot"]
@@ -667,14 +716,13 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
         # Find the manifest file in depotcache
         manifest_file = os.path.join(depotcache_dir, f"{depot_id}_{manifest_id}.manifest")
 
-        cmd = [
-            dotnet_path,
-            dll_path,
+        cmd = cmd_prefix + [
             "-app", str(appid),
             "-depot", str(depot_id),
             "-manifest", str(manifest_id),
             "-dir", install_dir,
             "-max-downloads", "8",
+            "-os", "linux",
         ]
 
         # Add manifest file if it exists in depotcache
@@ -683,8 +731,11 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
             logger.info(f"QuickAccela: Using manifest file: {manifest_file}")
 
         # Add depot keys file if it has content
-        if os.path.getsize(keys_path) > 0:
-            cmd.extend(["-depotkeys", keys_path])
+        try:
+            if os.path.getsize(keys_path) > 0:
+                cmd.extend(["-depotkeys", keys_path])
+        except Exception:
+            pass
 
         cmd.append("-validate")
 
@@ -704,10 +755,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
             while True:
                 line = await process.stdout.readline()
                 if not line:
-                    if process.returncode is not None:
-                        break
-                    await asyncio.sleep(0.1)
-                    continue
+                    break  # EOF — stdout closed, process finishing
 
                 if _is_download_cancelled(appid):
                     process.kill()
@@ -716,7 +764,8 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
                 clean_line = line.decode("utf-8", errors="replace").strip()
                 if clean_line:
                     last_line = clean_line
-                    logger.debug(f"QuickAccela: DDM[{depot_id}]: {clean_line}")
+                    output_log.append(clean_line.lower())
+                    logger.info(f"QuickAccela: DDM[{depot_id}]: {clean_line}")
                     m = percent_re.search(clean_line)
                     if m:
                         pct = float(m.group(1))
@@ -731,13 +780,20 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
             await process.wait()
             rc = process.returncode
-            logger.info(f"QuickAccela: DepotDownloader depot {depot_id} exit code: {rc}")
+            logger.info(f"QuickAccela: DepotDownloader depot {depot_id} exit code: {rc}, last output: {last_line}")
 
-            if rc != 0:
-                logger.warning(f"QuickAccela: DepotDownloader failed for depot {depot_id}: {last_line}")
+            # Check for auth/access errors in output
+            full_log = "\n".join(output_log)
+            auth_error = any(x in full_log for x in ("access denied", "manifest not available", "no subscription", "purchase"))
+
+            if rc != 0 or auth_error:
+                error_msg = last_line if last_line else f"exit code {rc}"
+                if auth_error:
+                    error_msg = f"Access denied for depot {depot_id} (auth required)"
+                logger.warning(f"QuickAccela: DepotDownloader failed for depot {depot_id}: {error_msg}")
                 _set_download_state(appid, {
                     "status": "failed",
-                    "error": f"Depot {depot_id} download failed: {last_line}",
+                    "error": f"Depot {depot_id} failed: {error_msg}",
                 })
                 return
 
@@ -1191,6 +1247,13 @@ async def _download_zip_for_app(appid: int) -> None:
                         _set_download_state(appid, {"status": "failed", "error": f"Game download failed: {depot_exc}"})
                         return
 
+                    # Save depot snapshot for update checking
+                    try:
+                        from api_manifest import save_depot_snapshot
+                        await save_depot_snapshot(appid)
+                    except Exception as snap_exc:
+                        logger.warning(f"QuickAccela: depot snapshot save error: {snap_exc}")
+
                     # Restart Steam so it reads the fresh ACF (like ACCELA)
                     asyncio.ensure_future(_restart_steam_delayed(5))
 
@@ -1356,6 +1419,9 @@ def get_installed_lua_scripts() -> dict:
                         "fileSize": file_stat.st_size,
                         "modifiedDate": modified_time.strftime("%Y-%m-%d %H:%M:%S"),
                         "path": file_path,
+                        "hasGameFiles": os.path.exists(
+                            os.path.join(base_path, "steamapps", f"appmanifest_{appid}.acf")
+                        ),
                     })
                 except ValueError:
                     continue
