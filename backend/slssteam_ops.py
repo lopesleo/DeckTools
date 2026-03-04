@@ -29,7 +29,7 @@ def _config_path() -> str:
 #  FAKE APP ID MANAGEMENT
 # ==========================================
 
-def add_fake_app_id(appid: int) -> dict:
+def add_fake_app_id(appid: int, fake_id: int = 480) -> dict:
     try:
         config_path = _config_path()
         if not os.path.exists(config_path):
@@ -42,12 +42,7 @@ def add_fake_app_id(appid: int) -> dict:
         with open(config_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
-        # Map appid to Spacewar (480) so SLSsteam intercepts network calls
-        # and Steam shows a "playing" status instead of "available".
-        # This is how LuaToolsLinux worked — friends see "Playing Spacewar".
-        # Self-mapping (appid: appid) doesn't work because Steam servers
-        # reject ownership for unowned games.
-        entry_line = f"  {appid}: 480\n"
+        entry_line = f"  {appid}: {fake_id}\n"
         target = str(appid)
         for line in lines:
             stripped = line.strip()
@@ -72,7 +67,7 @@ def add_fake_app_id(appid: int) -> dict:
         with open(tmp, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
         os.replace(tmp, config_path)
-        return {"success": True, "message": f"FakeAppId ({appid}) added!"}
+        return {"success": True, "message": f"FakeAppId ({appid} -> {fake_id}) added!"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -349,6 +344,10 @@ async def add_game_dlcs(appid: int) -> dict:
         if not dlcs:
             return {"success": False, "error": "No DLCs found for this game"}
 
+        # Steam/SLSsteam handles up to 64 DLCs natively; only write to config if >64
+        if len(dlcs) <= 64:
+            return {"success": True, "message": f"{len(dlcs)} DLCs found — Steam handles ≤64 natively, no config needed", "count": len(dlcs), "skipped": True}
+
         with open(config_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
@@ -383,7 +382,7 @@ async def add_game_dlcs(appid: int) -> dict:
             f.writelines(new_lines)
         os.replace(tmp, config_path)
 
-        return {"success": True, "message": f"{len(dlcs)} DLCs added!"}
+        return {"success": True, "message": f"{len(dlcs)} DLCs added!", "count": len(dlcs)}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -428,13 +427,35 @@ def check_game_dlcs_status(appid: int) -> dict:
     try:
         config_path = _config_path()
         if not os.path.exists(config_path):
-            return {"success": True, "exists": False}
+            return {"success": True, "exists": False, "count": 0}
         with open(config_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        exists = f"\n  {appid}:" in content or content.startswith(f"  {appid}:")
-        return {"success": True, "exists": exists}
+            lines = f.readlines()
+        # Find appid block under DlcData and count entries
+        in_dlcdata = False
+        in_app_block = False
+        count = 0
+        target = f"{appid}:"
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("DlcData:"):
+                in_dlcdata = True
+                continue
+            if in_dlcdata:
+                indent = len(line) - len(line.lstrip())
+                if indent <= 0 and stripped and not stripped.startswith("#"):
+                    in_dlcdata = False
+                    continue
+                if indent == 2 and stripped.startswith(target):
+                    in_app_block = True
+                    continue
+                elif indent == 2 and stripped and in_app_block:
+                    in_app_block = False
+                elif in_app_block and indent >= 4 and stripped:
+                    count += 1
+        exists = count > 0
+        return {"success": True, "exists": exists, "count": count}
     except Exception:
-        return {"success": True, "exists": False}
+        return {"success": True, "exists": False, "count": 0}
 
 
 # ==========================================
@@ -517,7 +538,7 @@ def _remove_from_additional_apps(appid: int) -> None:
         pass
 
 
-def uninstall_game_full(appid: int) -> dict:
+def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
     """Full uninstall: game files, appmanifest, depotcache manifests, lua, and all SLSsteam config entries."""
     removed = []
     errors = []
@@ -526,6 +547,7 @@ def uninstall_game_full(appid: int) -> dict:
         # 1. Find and remove game files + appmanifest
         path_info = get_game_install_path_response(appid)
         install_path = path_info.get("installPath") if isinstance(path_info, dict) else None
+        library_path = path_info.get("libraryPath") if isinstance(path_info, dict) else None
 
         if install_path and os.path.exists(install_path):
             shutil.rmtree(install_path, ignore_errors=True)
@@ -545,6 +567,31 @@ def uninstall_game_full(appid: int) -> dict:
                     errors.append(f"Failed to remove appmanifest: {e}")
         else:
             logger.info(f"QuickAccela: No game directory found for {appid}, skipping file removal")
+
+        # 1b. Remove compatdata/proton prefix if requested
+        if remove_compatdata:
+            try:
+                from steam_utils import detect_steam_install_path
+                steam_path = detect_steam_install_path()
+                if steam_path:
+                    compatdata_path = os.path.join(steam_path, "steamapps", "compatdata", str(appid))
+                    if os.path.exists(compatdata_path):
+                        shutil.rmtree(compatdata_path, ignore_errors=True)
+                        if not os.path.exists(compatdata_path):
+                            removed.append("compatdata")
+                            logger.info(f"QuickAccela: Removed compatdata: {compatdata_path}")
+                        else:
+                            errors.append("Failed to fully remove compatdata")
+                    # Also check other library paths
+                    if library_path and library_path != steam_path:
+                        alt_compatdata = os.path.join(library_path, "steamapps", "compatdata", str(appid))
+                        if os.path.exists(alt_compatdata):
+                            shutil.rmtree(alt_compatdata, ignore_errors=True)
+                            if not os.path.exists(alt_compatdata):
+                                if "compatdata" not in removed:
+                                    removed.append("compatdata")
+            except Exception as e:
+                logger.warning(f"QuickAccela: Compatdata cleanup error: {e}")
 
         # 2. Remove depotcache manifests for this game's depots
         try:

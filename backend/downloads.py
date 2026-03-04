@@ -1082,7 +1082,7 @@ async def _download_zip_for_app(appid: int) -> None:
                     continue
 
                 total = int(resp.headers.get("Content-Length", "0") or "0")
-                _set_download_state(appid, {"status": "downloading", "bytesRead": 0, "totalBytes": total})
+                _set_download_state(appid, {"status": "downloading", "bytesRead": 0, "totalBytes": total, "downloadStartTime": time.time()})
 
                 with open(dest_path, "wb") as output:
                     async for chunk in resp.aiter_bytes():
@@ -1092,7 +1092,9 @@ async def _download_zip_for_app(appid: int) -> None:
                             raise RuntimeError("cancelled")
                         output.write(chunk)
                         read = int(_get_download_state(appid).get("bytesRead", 0)) + len(chunk)
-                        _set_download_state(appid, {"bytesRead": read})
+                        elapsed = time.time() - _get_download_state(appid).get("downloadStartTime", time.time())
+                        speed = int(read / elapsed) if elapsed > 0.5 else 0
+                        _set_download_state(appid, {"bytesRead": read, "speed": speed})
 
                 if _is_download_cancelled(appid):
                     raise RuntimeError("cancelled")

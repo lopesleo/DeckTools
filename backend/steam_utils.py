@@ -171,6 +171,7 @@ def get_game_install_path_response(appid: int) -> Dict[str, any]:
         "installDir": install_dir,
         "libraryPath": library_path,
         "path": full_install_path,
+        "sizeOnDisk": int(app_state.get("SizeOnDisk", 0)),
     }
 
 

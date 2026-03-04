@@ -22,14 +22,8 @@ export const verifySlssteamInjected = async () =>
   parseResult(await call<[], string>("verify_slssteam_injected"));
 
 // API Manifest
-export const initApis = async () =>
-  parseResult(await call<[], string>("init_apis"));
-
 export const fetchFreeApisNow = async () =>
   parseResult(await call<[], string>("fetch_free_apis_now"));
-
-export const getInitApisMessage = async () =>
-  parseResult(await call<[], string>("get_init_apis_message"));
 
 export const saveRyuCookie = async (cookie: string) =>
   parseResult(await call<[string], string>("save_ryu_cookie", cookie));
@@ -39,6 +33,15 @@ export const loadRyuCookie = async () =>
 
 export const updateMorrenusKey = async (key: string) =>
   parseResult(await call<[string], string>("update_morrenus_key", key));
+
+export const loadMorrenusKey = async () =>
+  parseResult(await call<[], string>("load_morrenus_key"));
+
+export const searchMorrenus = async (query: string) =>
+  parseResult(await call<[string], string>("search_morrenus", query));
+
+export const checkGameUpdate = async (appid: number) =>
+  parseResult(await call<[number], string>("check_game_update", appid));
 
 // Downloads
 export const startDownload = async (appid: number) =>
@@ -62,44 +65,16 @@ export const deleteLuatoolsForApp = async (appid: number) =>
 export const getInstalledLuaScripts = async () =>
   parseResult(await call<[], string>("get_installed_lua_scripts"));
 
-export const readLoadedApps = async () =>
-  parseResult(await call<[], string>("read_loaded_apps"));
-
-export const dismissLoadedApps = async () =>
-  parseResult(await call<[], string>("dismiss_loaded_apps"));
-
 export const fetchAppName = async (appid: number) =>
   parseResult(await call<[number], string>("fetch_app_name", appid));
-
-export const getGamesDatabase = async () =>
-  parseResult(await call<[], string>("get_games_database"));
-
-export const saveLauncherPathConfig = async (path: string) =>
-  parseResult(await call<[string], string>("save_launcher_path_config", path));
-
-export const loadLauncherPath = async () =>
-  parseResult(await call<[], string>("load_launcher_path"));
 
 // Steam Utils
 export const getGameInstallPath = async (appid: number) =>
   parseResult(await call<[number], string>("get_game_install_path", appid));
 
-export const getInstalledGames = async () =>
-  parseResult(await call<[], string>("get_installed_games"));
-
-// SLSsteam Config (read/write)
-export const readSlsConfig = async () =>
-  parseResult(await call<[], string>("read_sls_config"));
-
-export const getSlsValue = async (key: string) =>
-  parseResult(await call<[string], string>("get_sls_value", key));
-
-export const setSlsValue = async (key: string, value: any) =>
-  parseResult(await call<[string, any], string>("set_sls_value", key, value));
-
 // SLSsteam Operations
-export const addFakeAppId = async (appid: number) =>
-  parseResult(await call<[number], string>("add_fake_app_id", appid));
+export const addFakeAppId = async (appid: number, fakeId: number = 480) =>
+  parseResult(await call<[number, number], string>("add_fake_app_id", appid, fakeId));
 
 export const removeFakeAppId = async (appid: number) =>
   parseResult(await call<[number], string>("remove_fake_app_id", appid));
@@ -131,8 +106,18 @@ export const getSlsPlayStatus = async () =>
 export const setSlsPlayStatus = async (enabled: boolean) =>
   parseResult(await call<[boolean], string>("set_sls_play_status", enabled));
 
-export const uninstallGameFull = async (appid: number) =>
-  parseResult(await call<[number], string>("uninstall_game_full", appid));
+export const uninstallGameFull = async (appid: number, removeCompatdata: boolean = false) =>
+  parseResult(await call<[number, boolean], string>("uninstall_game_full", appid, removeCompatdata));
+
+// Goldberg Steam Emulator
+export const checkGoldbergStatus = async (installPath: string) =>
+  parseResult(await call<[string], string>("check_goldberg_status", installPath));
+
+export const applyGoldberg = async (installPath: string, appid: number) =>
+  parseResult(await call<[string, number], string>("apply_goldberg", installPath, appid));
+
+export const removeGoldberg = async (installPath: string, appid: number) =>
+  parseResult(await call<[string, number], string>("remove_goldberg", installPath, appid));
 
 // Fixes
 export const checkForFixes = async (appid: number) =>
@@ -159,29 +144,6 @@ export const applyGameFix = async (
 export const getApplyFixStatus = async (appid: number) =>
   parseResult(await call<[number], string>("get_apply_fix_status", appid));
 
-export const cancelApplyFix = async (appid: number) =>
-  parseResult(await call<[number], string>("cancel_apply_fix", appid));
-
-export const unfixGame = async (
-  appid: number,
-  installPath?: string,
-  fixDate?: string,
-) =>
-  parseResult(
-    await call<[number, string, string], string>(
-      "unfix_game",
-      appid,
-      installPath ?? "",
-      fixDate ?? "",
-    ),
-  );
-
-export const getUnfixStatus = async (appid: number) =>
-  parseResult(await call<[number], string>("get_unfix_status", appid));
-
-export const getInstalledFixes = async () =>
-  parseResult(await call<[], string>("get_installed_fixes"));
-
 export const applyLinuxNativeFix = async (installPath: string) =>
   parseResult(
     await call<[string], string>("apply_linux_native_fix", installPath),
@@ -203,9 +165,6 @@ export const getWorkshopDownloadStatus = async () =>
 export const cancelWorkshopDownload = async () =>
   parseResult(await call<[], string>("cancel_workshop_download"));
 
-export const saveWorkshopToolPath = async (path: string) =>
-  parseResult(await call<[string], string>("save_workshop_tool_path", path));
-
 // Repair / Maintenance
 export const repairAppmanifest = async (appid: number) =>
   parseResult(await call<[number], string>("repair_appmanifest", appid));
@@ -220,6 +179,3 @@ export const checkDependencies = async () =>
 
 export const installDependencies = async () =>
   parseResult(await call<[], string>("install_dependencies"));
-
-export const getInstallStatus = async () =>
-  parseResult(await call<[], string>("get_install_status"));

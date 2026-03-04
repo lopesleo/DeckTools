@@ -13,8 +13,14 @@ import {
   getActiveDownloads,
   startDownload,
   detectStoreAppid,
+  searchMorrenus,
 } from "../api";
 import { ROUTE_GAME_DETAIL, ROUTE_SETTINGS, ROUTE_DOWNLOADS } from "../routes";
+
+interface SearchResult {
+  appid: number;
+  name: string;
+}
 
 export function GameList() {
   const [games, setGames] = useState<GameInfo[]>([]);
@@ -24,6 +30,13 @@ export function GameList() {
   const [addStatus, setAddStatus] = useState("");
   const [activeDownloadId, setActiveDownloadId] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [sortMode, setSortMode] = useState<"name" | "appid" | "recent">("name");
+
+  // Morrenus search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
   const loadGames = useCallback(async () => {
     try {
@@ -97,10 +110,8 @@ export function GameList() {
           pollRef.current = null;
           setAddStatus("Done! Restart Steam to see the game.");
           setActiveDownloadId(null);
-          setTimeout(() => {
-            loadGames();
-            setAddStatus("");
-          }, 6000);
+          loadGames();
+          setTimeout(() => setAddStatus(""), 6000);
         } else if (phase === "failed") {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
@@ -167,11 +178,8 @@ export function GameList() {
       if (document.visibilityState === "visible") detectAppId();
     };
     document.addEventListener("visibilitychange", onVisibility);
-    // Also poll to catch QAM reopens that don't trigger visibilitychange
-    const redetectInterval = setInterval(detectAppId, 10000);
     const cleanup1 = () => {
       document.removeEventListener("visibilitychange", onVisibility);
-      clearInterval(redetectInterval);
     };
 
     // Resume active downloads
@@ -215,13 +223,60 @@ export function GameList() {
     }
   };
 
-  const filtered = search
+  const handleSearchMorrenus = async () => {
+    if (searchQuery.trim().length < 2) {
+      setSearchError("Enter at least 2 characters");
+      return;
+    }
+    setSearching(true);
+    setSearchError("");
+    setSearchResults([]);
+    try {
+      const result = await searchMorrenus(searchQuery.trim());
+      if (result.success) {
+        setSearchResults(result.results || []);
+        if ((result.results || []).length === 0) {
+          setSearchError("No games found");
+        }
+      } else {
+        setSearchError(result.error || "Search failed");
+      }
+    } catch (err: any) {
+      setSearchError("Error: " + (err?.message || String(err)));
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleSelectSearchResult = (result: SearchResult) => {
+    setAddAppId(String(result.appid));
+    setSearchResults([]);
+    setSearchQuery("");
+    setAddStatus(`Selected: ${result.name} (${result.appid})`);
+  };
+
+  const sortLabels: Record<string, string> = { name: "A-Z", appid: "AppID", recent: "Recent" };
+
+  const cycleSortMode = () => {
+    setSortMode((prev) => {
+      if (prev === "name") return "appid";
+      if (prev === "appid") return "recent";
+      return "name";
+    });
+  };
+
+  const filtered = (search
     ? games.filter(
         (g: GameInfo) =>
           g.name.toLowerCase().includes(search.toLowerCase()) ||
           String(g.appid).includes(search),
       )
-    : games;
+    : games
+  ).slice().sort((a, b) => {
+    if (sortMode === "appid") return a.appid - b.appid;
+    if (sortMode === "recent") return b.appid - a.appid;
+    return a.name.localeCompare(b.name);
+  });
 
   const navigateToDetail = (appid: number) => {
     Navigation.Navigate(ROUTE_GAME_DETAIL + "/" + appid);
@@ -260,6 +315,56 @@ export function GameList() {
         )}
       </PanelSection>
 
+      {/* Morrenus Search */}
+      <PanelSection title="Search by Name">
+        <PanelSectionRow>
+          <TextField
+            label="Game name"
+            value={searchQuery}
+            onChange={(e: any) => setSearchQuery(e?.target?.value ?? "")}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={handleSearchMorrenus} disabled={searching}>
+            {searching ? "Searching..." : "Search Morrenus"}
+          </ButtonItem>
+        </PanelSectionRow>
+        {searchError && (
+          <PanelSectionRow>
+            <div style={{ textAlign: "center", padding: "4px", color: "#ff6b6b", fontSize: "12px" }}>
+              {searchError}
+            </div>
+          </PanelSectionRow>
+        )}
+        {searchResults.length > 0 && (
+          <>
+            <PanelSectionRow>
+              <div style={{ fontSize: "11px", color: "#8b929a", textAlign: "center" }}>
+                {searchResults.length} results — tap to select
+              </div>
+            </PanelSectionRow>
+            {searchResults.slice(0, 15).map((r: SearchResult) => (
+              <PanelSectionRow key={r.appid}>
+                <ButtonItem
+                  layout="below"
+                  onClick={() => handleSelectSearchResult(r)}
+                  description={`AppID: ${r.appid}`}
+                >
+                  {r.name}
+                </ButtonItem>
+              </PanelSectionRow>
+            ))}
+            {searchResults.length > 15 && (
+              <PanelSectionRow>
+                <div style={{ fontSize: "11px", color: "#8b929a", textAlign: "center" }}>
+                  +{searchResults.length - 15} more results — refine your search
+                </div>
+              </PanelSectionRow>
+            )}
+          </>
+        )}
+      </PanelSection>
+
       <PanelSection title="My Games">
         <PanelSectionRow>
           <TextField
@@ -267,6 +372,11 @@ export function GameList() {
             value={search}
             onChange={(e: any) => setSearch(e?.target?.value ?? "")}
           />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={cycleSortMode}>
+            Sort: {sortLabels[sortMode]}
+          </ButtonItem>
         </PanelSectionRow>
 
         {loading ? (

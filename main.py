@@ -109,6 +109,18 @@ class Plugin:
         from api_manifest import update_morrenus_key
         return _j(update_morrenus_key(key_content))
 
+    async def load_morrenus_key(self) -> str:
+        from api_manifest import load_morrenus_key
+        return _j({"success": True, "key": load_morrenus_key()})
+
+    async def search_morrenus(self, query: str) -> str:
+        from api_manifest import search_morrenus
+        return _j(await search_morrenus(query))
+
+    async def check_game_update(self, appid: int) -> str:
+        from api_manifest import check_game_update
+        return _j(await check_game_update(appid))
+
     # ==========================================================================
     # Downloads
     # ==========================================================================
@@ -206,9 +218,9 @@ class Plugin:
     # SLSsteam Operations (FakeAppId, Token, DLC, Play, Uninstall)
     # ==========================================================================
 
-    async def add_fake_app_id(self, appid: int) -> str:
+    async def add_fake_app_id(self, appid: int, fake_id: int = 480) -> str:
         from slssteam_ops import add_fake_app_id
-        return _j(add_fake_app_id(appid))
+        return _j(add_fake_app_id(appid, fake_id))
 
     async def remove_fake_app_id(self, appid: int) -> str:
         from slssteam_ops import remove_fake_app_id
@@ -250,9 +262,25 @@ class Plugin:
         from slssteam_ops import set_sls_play_status
         return _j(set_sls_play_status(enabled))
 
-    async def uninstall_game_full(self, appid: int) -> str:
+    async def uninstall_game_full(self, appid: int, remove_compatdata: bool = False) -> str:
         from slssteam_ops import uninstall_game_full
-        return _j(uninstall_game_full(appid))
+        return _j(uninstall_game_full(appid, remove_compatdata))
+
+    # ==========================================================================
+    # Goldberg Steam Emulator
+    # ==========================================================================
+
+    async def check_goldberg_status(self, install_path: str) -> str:
+        from goldberg import check_goldberg_status
+        return _j(check_goldberg_status(install_path))
+
+    async def apply_goldberg(self, install_path: str, appid: int) -> str:
+        from goldberg import apply_goldberg
+        return _j(apply_goldberg(install_path, appid))
+
+    async def remove_goldberg(self, install_path: str, appid: int) -> str:
+        from goldberg import remove_goldberg
+        return _j(remove_goldberg(install_path, appid))
 
     # ==========================================================================
     # Fixes

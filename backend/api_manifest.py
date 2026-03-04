@@ -216,3 +216,185 @@ def update_morrenus_key(key_content: str) -> dict:
         return {"success": True, "message": "Morrenus key updated successfully"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def _get_morrenus_key() -> str:
+    """Extract the Morrenus API key from api.json."""
+    try:
+        path = backend_path(API_JSON_FILE)
+        if not os.path.exists(path):
+            return ""
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.loads(f.read())
+        for api in data.get("api_list", []):
+            url = api.get("url", "")
+            if "morrenus.xyz" in url and "api_key=" in url:
+                return url.split("api_key=")[-1].strip()
+        return ""
+    except Exception:
+        return ""
+
+
+def load_morrenus_key() -> str:
+    """Return the current Morrenus API key."""
+    return _get_morrenus_key()
+
+
+async def search_morrenus(query: str) -> dict:
+    """Search for games by name using the Morrenus API."""
+    try:
+        key = _get_morrenus_key()
+        if not key:
+            return {"success": False, "error": "Morrenus API key not configured. Set it in Settings."}
+
+        if len(query.strip()) < 2:
+            return {"success": False, "error": "Search query must be at least 2 characters"}
+
+        client = await ensure_http_client("MorrenusSearch")
+        resp = await client.get(
+            "https://manifest.morrenus.xyz/api/v1/search",
+            params={"q": query.strip(), "limit": 50},
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=15,
+        )
+
+        if resp.status_code == 401:
+            return {"success": False, "error": "Invalid API key. Check Settings."}
+        elif resp.status_code == 429:
+            return {"success": False, "error": "Daily API limit exceeded. Try again later."}
+        elif resp.status_code != 200:
+            try:
+                detail = resp.json().get("detail", resp.text)
+            except Exception:
+                detail = resp.text
+            return {"success": False, "error": f"API error ({resp.status_code}): {detail}"}
+
+        data = resp.json()
+        results = data.get("results", [])
+
+        # Filter out non-game results (soundtracks, demos, tools, etc.)
+        import re
+        blacklist = [
+            "soundtrack", "ost", "original soundtrack", "artbook",
+            "graphic novel", "demo", "server", "dedicated server",
+            "tool", "sdk", "3d print model",
+        ]
+        filtered = []
+        for game in results:
+            name = game.get("game_name", "")
+            name_lower = name.lower()
+            is_blacklisted = any(re.search(r'\b' + kw + r'\b', name_lower) for kw in blacklist)
+            if not is_blacklisted:
+                filtered.append({
+                    "appid": game.get("game_id"),
+                    "name": game.get("game_name", f"Unknown ({game.get('game_id', '?')})"),
+                })
+
+        return {"success": True, "results": filtered, "total": len(results), "filtered": len(filtered)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def check_game_update(appid: int) -> dict:
+    """Check if a game has an update available by comparing local manifest IDs with Morrenus."""
+    import re
+    import tempfile
+    import zipfile
+
+    try:
+        appid = int(appid)
+    except Exception:
+        return {"success": False, "error": "Invalid appid"}
+
+    try:
+        # 1. Read local manifest IDs from installed lua
+        from steam_utils import detect_steam_install_path
+        from downloads import _parse_lua_depots
+        steam_path = detect_steam_install_path()
+        if not steam_path:
+            return {"success": False, "error": "Steam not found"}
+
+        lua_path = os.path.join(steam_path, "config", "stplug-in", f"{appid}.lua")
+        if not os.path.exists(lua_path):
+            lua_path = lua_path + ".disabled"
+        if not os.path.exists(lua_path):
+            return {"success": False, "error": "Game not installed (no lua file)"}
+
+        local_depots = _parse_lua_depots(lua_path)
+        if not local_depots:
+            return {"success": False, "error": "Could not parse local depot info"}
+
+        local_manifests = {str(d["depot"]): d["manifest"] for d in local_depots if "manifest" in d}
+        if not local_manifests:
+            return {"success": False, "error": "No manifest IDs found in lua file"}
+
+        # 2. Download latest manifest ZIP from Morrenus
+        key = _get_morrenus_key()
+        if not key:
+            return {"success": False, "error": "Morrenus API key not configured"}
+
+        client = await ensure_http_client("UpdateCheck")
+        resp = await client.get(
+            f"https://manifest.morrenus.xyz/api/v1/manifest/{appid}",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=30,
+        )
+
+        if resp.status_code == 404:
+            return {"success": False, "error": "Game not found on Morrenus"}
+        elif resp.status_code == 429:
+            return {"success": False, "error": "Daily API limit exceeded"}
+        elif resp.status_code != 200:
+            return {"success": False, "error": f"Morrenus API error ({resp.status_code})"}
+
+        # 3. Extract lua from ZIP and parse manifest IDs
+        zip_data = resp.content
+        remote_manifests = {}
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+                tmp.write(zip_data)
+                tmp_path = tmp.name
+
+            with zipfile.ZipFile(tmp_path, "r") as zf:
+                for name in zf.namelist():
+                    if name.endswith(".lua"):
+                        lua_content = zf.read(name).decode("utf-8", errors="ignore")
+                        for m in re.finditer(r'setManifestid\(\s*(\d+)\s*,\s*"(\d+)"', lua_content):
+                            remote_manifests[m.group(1)] = m.group(2)
+                        break
+
+            os.unlink(tmp_path)
+        except Exception as e:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            return {"success": False, "error": f"Failed to parse remote manifest: {e}"}
+
+        if not remote_manifests:
+            return {"success": False, "error": "Could not extract manifest IDs from Morrenus"}
+
+        # 4. Compare
+        update_available = False
+        changes = []
+        for depot_id, local_mid in local_manifests.items():
+            remote_mid = remote_manifests.get(depot_id)
+            if remote_mid and remote_mid != local_mid:
+                update_available = True
+                changes.append({"depot": depot_id, "local": local_mid, "remote": remote_mid})
+
+        # Check for new depots
+        for depot_id in remote_manifests:
+            if depot_id not in local_manifests:
+                update_available = True
+                changes.append({"depot": depot_id, "local": None, "remote": remote_manifests[depot_id]})
+
+        return {
+            "success": True,
+            "updateAvailable": update_available,
+            "localDepots": len(local_manifests),
+            "remoteDepots": len(remote_manifests),
+            "changes": changes,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}

@@ -11,6 +11,7 @@ import {
   saveRyuCookie,
   loadRyuCookie,
   updateMorrenusKey,
+  loadMorrenusKey,
   fetchFreeApisNow,
   checkDependencies,
   installDependencies,
@@ -34,6 +35,11 @@ export function Settings() {
       const cookieResult = await loadRyuCookie();
       if (cookieResult.success && cookieResult.cookie) {
         setRyuCookie(cookieResult.cookie);
+      }
+
+      const keyResult = await loadMorrenusKey();
+      if (keyResult.success && keyResult.key) {
+        setMorrenusKey(keyResult.key);
       }
 
       const depsResult = await checkDependencies();

@@ -3,6 +3,8 @@ import {
   PanelSection,
   PanelSectionRow,
   ButtonItem,
+  TextField,
+  ToggleField,
   Navigation,
 } from "@decky/ui";
 import { ProgressBar } from "../components/ProgressBar";
@@ -30,23 +32,47 @@ import {
   uninstallGameFull,
   fetchAppName,
   repairAppmanifest,
+  checkGameUpdate,
+  checkGoldbergStatus,
+  applyGoldberg,
+  removeGoldberg,
 } from "../api";
 
 interface GameDetailProps {
   appid: number;
 }
 
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec < 1024) return `${bytesPerSec} B/s`;
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 export function GameDetail({ appid }: GameDetailProps) {
   const [gameName, setGameName] = useState(`Game ${appid}`);
   const [hasLua, setHasLua] = useState(false);
   const [installPath, setInstallPath] = useState("");
+  const [gameSize, setGameSize] = useState(0);
   const [downloadState, setDownloadState] = useState<any>(null);
   const [fakeAppId, setFakeAppId] = useState(false);
+  const [fakeIdValue, setFakeIdValue] = useState("480");
   const [hasToken, setHasToken] = useState(false);
   const [hasDlcs, setHasDlcs] = useState(false);
+  const [dlcCount, setDlcCount] = useState(0);
   const [fixes, setFixes] = useState<any>(null);
   const [fixStatus, setFixStatus] = useState<any>(null);
   const [message, setMessage] = useState("");
+  const [confirmUninstall, setConfirmUninstall] = useState(false);
+  const [removeCompatdata, setRemoveCompatdata] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [goldbergApplied, setGoldbergApplied] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -62,7 +88,16 @@ export function GameDetail({ appid }: GameDetailProps) {
 
       // Get install path
       const pathResult = await getGameInstallPath(appid);
-      if (pathResult.success) setInstallPath(pathResult.installPath || "");
+      if (pathResult.success) {
+        setInstallPath(pathResult.installPath || "");
+        if (pathResult.sizeOnDisk) setGameSize(pathResult.sizeOnDisk);
+
+        // Check Goldberg status
+        if (pathResult.installPath) {
+          const gbResult = await checkGoldbergStatus(pathResult.installPath);
+          if (gbResult.success) setGoldbergApplied(gbResult.applied);
+        }
+      }
 
       // Check FakeAppId, Token, DLC
       const fakeResult = await checkFakeAppIdStatus(appid);
@@ -72,7 +107,10 @@ export function GameDetail({ appid }: GameDetailProps) {
       if (tokenResult.success) setHasToken(tokenResult.exists);
 
       const dlcResult = await checkGameDlcsStatus(appid);
-      if (dlcResult.success) setHasDlcs(dlcResult.exists);
+      if (dlcResult.success) {
+        setHasDlcs(dlcResult.exists);
+        if (dlcResult.count) setDlcCount(dlcResult.count);
+      }
 
       // Check download status
       const dlStatus = await getDownloadStatus(appid);
@@ -156,7 +194,8 @@ export function GameDetail({ appid }: GameDetailProps) {
       await removeFakeAppId(appid);
       setFakeAppId(false);
     } else {
-      const result = await addFakeAppId(appid);
+      const id = parseInt(fakeIdValue, 10) || 480;
+      const result = await addFakeAppId(appid, id);
       if (result.success) setFakeAppId(true);
       setMessage(result.message || "");
     }
@@ -177,11 +216,20 @@ export function GameDetail({ appid }: GameDetailProps) {
     if (hasDlcs) {
       await removeGameDlcs(appid);
       setHasDlcs(false);
+      setDlcCount(0);
     } else {
       setMessage("Fetching DLCs...");
       const result = await addGameDlcs(appid);
       setMessage(result.message || result.error || "");
-      if (result.success) setHasDlcs(true);
+      if (result.success) {
+        if (result.skipped) {
+          // ≤64 DLCs — Steam handles natively, not written to config
+          setHasDlcs(false);
+        } else {
+          setHasDlcs(true);
+        }
+        if (result.count) setDlcCount(result.count);
+      }
     }
   };
 
@@ -226,9 +274,57 @@ export function GameDetail({ appid }: GameDetailProps) {
     );
   };
 
+  const handleCheckUpdate = async () => {
+    setUpdateStatus("checking");
+    setMessage("Checking for updates...");
+    const result = await checkGameUpdate(appid);
+    if (result.success) {
+      if (result.updateAvailable) {
+        setUpdateStatus("available");
+        const changeCount = (result.changes || []).length;
+        setMessage(`Update available! ${changeCount} depot(s) changed`);
+      } else {
+        setUpdateStatus("uptodate");
+        setMessage("Game is up to date");
+      }
+    } else {
+      setUpdateStatus(null);
+      setMessage(result.error || "Update check failed");
+    }
+  };
+
+  const handleToggleGoldberg = async () => {
+    if (!installPath) {
+      setMessage("Install path not found");
+      return;
+    }
+    if (goldbergApplied) {
+      setMessage("Removing Goldberg...");
+      const result = await removeGoldberg(installPath, appid);
+      setMessage(result.message || result.error || "");
+      if (result.success) setGoldbergApplied(false);
+    } else {
+      setMessage("Applying Goldberg...");
+      const result = await applyGoldberg(installPath, appid);
+      setMessage(result.message || result.error || "");
+      if (result.success) setGoldbergApplied(true);
+    }
+  };
+
   const handleUninstall = async () => {
+    if (!confirmUninstall) {
+      setConfirmUninstall(true);
+      setMessage("Press again to confirm full uninstall");
+      // Auto-cancel confirmation after 5 seconds
+      setTimeout(() => {
+        setConfirmUninstall(false);
+        setMessage((prev) => prev === "Press again to confirm full uninstall" ? "" : prev);
+      }, 5000);
+      return;
+    }
+    setConfirmUninstall(false);
     setMessage("Uninstalling...");
-    const result = await uninstallGameFull(appid);
+    const result = await uninstallGameFull(appid, removeCompatdata);
     if (result.success) {
       setHasLua(false);
       setFakeAppId(false);
@@ -254,6 +350,10 @@ export function GameDetail({ appid }: GameDetailProps) {
     downloadState &&
     !["done", "failed", "cancelled", undefined].includes(downloadState.status);
 
+  const dlcLabel = hasDlcs
+    ? `Remove DLCs${dlcCount > 0 ? ` (${dlcCount})` : ""}`
+    : `Add DLCs${dlcCount > 0 ? ` (${dlcCount} found)` : ""}`;
+
   return (
     <>
       <PanelSection title={gameName}>
@@ -265,6 +365,7 @@ export function GameDetail({ appid }: GameDetailProps) {
         <PanelSectionRow>
           <div style={{ fontSize: "13px", color: hasLua ? "#00cc00" : "#666" }}>
             Status: {hasLua ? "Installed" : "Not installed"}
+            {gameSize > 0 && ` — ${formatSize(gameSize)}`}
           </div>
         </PanelSectionRow>
         {installPath && (
@@ -291,6 +392,7 @@ export function GameDetail({ appid }: GameDetailProps) {
                 {downloadState.currentApi && `API: ${downloadState.currentApi}`}
                 {" — "}
                 {downloadState.status}
+                {downloadState.speed > 0 && ` — ${formatSpeed(downloadState.speed)}`}
               </div>
             </PanelSectionRow>
             {downloadState.totalBytes > 0 && (
@@ -309,11 +411,21 @@ export function GameDetail({ appid }: GameDetailProps) {
             />
           </>
         ) : (
-          <ActionButton
-            label={hasLua ? "Re-download Manifest" : "Download Manifest"}
-            onClick={handleDownload}
-            variant="primary"
-          />
+          <>
+            <ActionButton
+              label={hasLua ? "Re-download Manifest" : "Download Manifest"}
+              onClick={handleDownload}
+              variant="primary"
+            />
+            {hasLua && (
+              <ActionButton
+                label={updateStatus === "checking" ? "Checking..." : updateStatus === "available" ? "Update Available!" : updateStatus === "uptodate" ? "Up to Date" : "Check for Updates"}
+                onClick={handleCheckUpdate}
+                disabled={updateStatus === "checking"}
+                description={updateStatus === "available" ? "Re-download to update" : undefined}
+              />
+            )}
+          </>
         )}
         {downloadState?.status === "done" && (
           <PanelSectionRow>
@@ -333,8 +445,20 @@ export function GameDetail({ appid }: GameDetailProps) {
 
       {/* Game Management */}
       <PanelSection title="Game Management">
+        <PanelSectionRow>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <div style={{ flex: 1 }}>
+              <TextField
+                label="FakeAppId"
+                value={fakeIdValue}
+                onChange={(e: any) => setFakeIdValue(e?.target?.value ?? "480")}
+                disabled={fakeAppId}
+              />
+            </div>
+          </div>
+        </PanelSectionRow>
         <ActionButton
-          label={fakeAppId ? "Remove FakeAppId (480)" : "Add FakeAppId (480)"}
+          label={fakeAppId ? `Remove FakeAppId (${fakeIdValue})` : `Add FakeAppId (${fakeIdValue})`}
           onClick={handleToggleFakeAppId}
         />
         <ActionButton
@@ -342,9 +466,16 @@ export function GameDetail({ appid }: GameDetailProps) {
           onClick={handleToggleToken}
         />
         <ActionButton
-          label={hasDlcs ? "Remove DLCs" : "Add DLCs"}
+          label={dlcLabel}
           onClick={handleToggleDlcs}
         />
+        {installPath && (
+          <ActionButton
+            label={goldbergApplied ? "Remove Goldberg" : "Apply Goldberg"}
+            onClick={handleToggleGoldberg}
+            description={goldbergApplied ? "Restore original steam_api DLLs" : "Replace steam_api with Goldberg emulator"}
+          />
+        )}
       </PanelSection>
 
       {/* Fixes */}
@@ -416,11 +547,19 @@ export function GameDetail({ appid }: GameDetailProps) {
             variant="danger"
           />
         )}
+        <PanelSectionRow>
+          <ToggleField
+            label="Remove Proton prefix"
+            description="Delete compatdata (saves, config)"
+            checked={removeCompatdata}
+            onChange={setRemoveCompatdata}
+          />
+        </PanelSectionRow>
         <ActionButton
-          label="Full Uninstall"
+          label={confirmUninstall ? "CONFIRM Full Uninstall" : "Full Uninstall"}
           onClick={handleUninstall}
           variant="danger"
-          description="Removes game files, manifests, and config entries"
+          description={confirmUninstall ? "Click to confirm — this cannot be undone" : "Removes game files, manifests, and config entries"}
         />
       </PanelSection>
 
