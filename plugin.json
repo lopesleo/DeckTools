@@ -5,7 +5,7 @@
   "api_version": 1,
   "publish": {
     "tags": ["gaming", "download-manager"],
-    "description": "Manage game downloads via SLSsteam + ACCELA in Game Mode",
+    "description": "Game library and configuration manager for Steam Deck",
     "image": ""
   }
 }
