@@ -74,7 +74,9 @@ export const getGameInstallPath = async (appid: number) =>
 
 // SLSsteam Operations
 export const addFakeAppId = async (appid: number, fakeId: number = 480) =>
-  parseResult(await call<[number, number], string>("add_fake_app_id", appid, fakeId));
+  parseResult(
+    await call<[number, number], string>("add_fake_app_id", appid, fakeId),
+  );
 
 export const removeFakeAppId = async (appid: number) =>
   parseResult(await call<[number], string>("remove_fake_app_id", appid));
@@ -106,18 +108,33 @@ export const getSlsPlayStatus = async () =>
 export const setSlsPlayStatus = async (enabled: boolean) =>
   parseResult(await call<[boolean], string>("set_sls_play_status", enabled));
 
-export const uninstallGameFull = async (appid: number, removeCompatdata: boolean = false) =>
-  parseResult(await call<[number, boolean], string>("uninstall_game_full", appid, removeCompatdata));
+export const uninstallGameFull = async (
+  appid: number,
+  removeCompatdata: boolean = false,
+) =>
+  parseResult(
+    await call<[number, boolean], string>(
+      "uninstall_game_full",
+      appid,
+      removeCompatdata,
+    ),
+  );
 
 // Goldberg Steam Emulator
 export const checkGoldbergStatus = async (installPath: string) =>
-  parseResult(await call<[string], string>("check_goldberg_status", installPath));
+  parseResult(
+    await call<[string], string>("check_goldberg_status", installPath),
+  );
 
 export const applyGoldberg = async (installPath: string, appid: number) =>
-  parseResult(await call<[string, number], string>("apply_goldberg", installPath, appid));
+  parseResult(
+    await call<[string, number], string>("apply_goldberg", installPath, appid),
+  );
 
 export const removeGoldberg = async (installPath: string, appid: number) =>
-  parseResult(await call<[string, number], string>("remove_goldberg", installPath, appid));
+  parseResult(
+    await call<[string, number], string>("remove_goldberg", installPath, appid),
+  );
 
 // Fixes
 export const checkForFixes = async (appid: number) =>
@@ -143,6 +160,29 @@ export const applyGameFix = async (
 
 export const getApplyFixStatus = async (appid: number) =>
   parseResult(await call<[number], string>("get_apply_fix_status", appid));
+
+export const cancelApplyFix = async (appid: number) =>
+  parseResult(await call<[number], string>("cancel_apply_fix", appid));
+
+export const getInstalledFixes = async () =>
+  parseResult(await call<[], string>("get_installed_fixes"));
+
+export const unfixGame = async (
+  appid: number,
+  installPath: string = "",
+  fixDate: string = "",
+) =>
+  parseResult(
+    await call<[number, string, string], string>(
+      "unfix_game",
+      appid,
+      installPath,
+      fixDate,
+    ),
+  );
+
+export const getUnfixStatus = async (appid: number) =>
+  parseResult(await call<[number], string>("get_unfix_status", appid));
 
 export const applyLinuxNativeFix = async (installPath: string) =>
   parseResult(

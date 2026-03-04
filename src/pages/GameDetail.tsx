@@ -29,6 +29,10 @@ import {
   checkForFixes,
   applyGameFix,
   getApplyFixStatus,
+  cancelApplyFix,
+  getInstalledFixes,
+  unfixGame,
+  getUnfixStatus,
   applyLinuxNativeFix,
   uninstallGameFull,
   fetchAppName,
@@ -42,6 +46,12 @@ import { useT } from "../i18n";
 
 interface GameDetailProps {
   appid: number;
+}
+
+interface InstalledFix {
+  date: string;
+  fixType: string;
+  filesCount: number;
 }
 
 function formatSpeed(bytesPerSec: number): string {
@@ -73,6 +83,7 @@ export function GameDetail({ appid }: GameDetailProps) {
   const [dlcCount, setDlcCount] = useState(0);
   const [fixes, setFixes] = useState<any>(null);
   const [fixStatus, setFixStatus] = useState<any>(null);
+  const [installedFixes, setInstalledFixes] = useState<InstalledFix[]>([]);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [removeCompatdata, setRemoveCompatdata] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
@@ -81,6 +92,20 @@ export function GameDetail({ appid }: GameDetailProps) {
 
   const toast = (title: string, body?: string, duration = 3000) =>
     toaster.toast({ title, body: body || gameName, duration });
+
+  const loadInstalledFixes = async () => {
+    const result = await getInstalledFixes();
+    if (result.success && result.fixes) {
+      const gameFixes = result.fixes
+        .filter((f: any) => f.appid === appid)
+        .map((f: any) => ({
+          date: f.date,
+          fixType: f.fixType,
+          filesCount: f.filesCount || 0,
+        }));
+      setInstalledFixes(gameFixes);
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -123,6 +148,8 @@ export function GameDetail({ appid }: GameDetailProps) {
       ) {
         setDownloadState(dlStatus.state);
       }
+
+      await loadInstalledFixes();
     };
     load();
   }, [appid]);
@@ -164,6 +191,7 @@ export function GameDetail({ appid }: GameDetailProps) {
         setFixStatus(status.state);
         if (status.state.status === "done") {
           toast(t("toastSuccess"), gameName);
+          loadInstalledFixes();
         } else if (status.state.status === "failed") {
           toast(t("toastError"), status.state.error || gameName, 5000);
         }
@@ -287,6 +315,40 @@ export function GameDetail({ appid }: GameDetailProps) {
     }
   };
 
+  const handleCancelFix = async () => {
+    await cancelApplyFix(appid);
+    setFixStatus((prev: any) => ({ ...prev, status: "cancelled" }));
+  };
+
+  const handleRemoveFix = async (fixDate?: string) => {
+    setBusy("unfix");
+    toast(t("toastFixRemoving"), gameName, 2000);
+    const result = await unfixGame(appid, installPath, fixDate || "");
+    if (result.success) {
+      // Poll unfix status
+      const poll = setInterval(async () => {
+        const status = await getUnfixStatus(appid);
+        if (status.success && status.state) {
+          if (status.state.status === "done") {
+            clearInterval(poll);
+            setBusy("");
+            toast(t("toastFixRemoved", status.state.filesRemoved || 0), gameName);
+            loadInstalledFixes();
+          } else if (status.state.status === "failed") {
+            clearInterval(poll);
+            setBusy("");
+            toast(t("toastError"), status.state.error || "", 4000);
+          }
+        }
+      }, 500);
+      // Safety timeout
+      setTimeout(() => { clearInterval(poll); setBusy(""); }, 30000);
+    } else {
+      setBusy("");
+      toast(t("toastError"), result.error || "", 4000);
+    }
+  };
+
   const handleNativeFix = async () => {
     if (!installPath) {
       toast(t("toastError"), t("installPathNotFound"), 4000);
@@ -392,6 +454,18 @@ export function GameDetail({ appid }: GameDetailProps) {
   const isDownloading =
     downloadState &&
     !["done", "failed", "cancelled", undefined].includes(downloadState.status);
+
+  const isFixInProgress =
+    fixStatus &&
+    !["done", "failed", "cancelled"].includes(fixStatus.status);
+
+  const fixStatusLabel = (() => {
+    if (!fixStatus) return "";
+    if (fixStatus.status === "downloading") return t("statusDownloading");
+    if (fixStatus.status === "extracting") return t("extracting");
+    if (fixStatus.status === "queued") return t("statusQueued");
+    return fixStatus.status;
+  })();
 
   const dlcLabel = hasDlcs
     ? `${t("removeDlcs")}${dlcCount > 0 ? ` (${dlcCount})` : ""}`
@@ -593,6 +667,7 @@ export function GameDetail({ appid }: GameDetailProps) {
                   handleApplyFix(fixes.genericFix.url, "Generic Fix")
                 }
                 variant="primary"
+                disabled={!!isFixInProgress}
               />
             )}
             {fixes.onlineFix?.available && (
@@ -602,6 +677,7 @@ export function GameDetail({ appid }: GameDetailProps) {
                   handleApplyFix(fixes.onlineFix.url, "Online Fix (Unsteam)")
                 }
                 variant="primary"
+                disabled={!!isFixInProgress}
               />
             )}
             {!fixes.genericFix?.available && !fixes.onlineFix?.available && (
@@ -613,14 +689,21 @@ export function GameDetail({ appid }: GameDetailProps) {
             )}
           </>
         )}
-        {fixStatus && !["done", "failed"].includes(fixStatus.status) && (
-          <PanelSectionRow>
-            <ProgressBar
-              value={fixStatus.bytesRead || 0}
-              max={fixStatus.totalBytes || 1}
-              label={fixStatus.status}
+        {isFixInProgress && (
+          <>
+            <PanelSectionRow>
+              <ProgressBar
+                value={fixStatus.bytesRead || 0}
+                max={fixStatus.totalBytes || 1}
+                label={fixStatusLabel}
+              />
+            </PanelSectionRow>
+            <ActionButton
+              label={t("cancelFix")}
+              onClick={handleCancelFix}
+              variant="danger"
             />
-          </PanelSectionRow>
+          </>
         )}
         <ActionButton
           label={t("applyLinuxNativeFix")}
@@ -633,6 +716,54 @@ export function GameDetail({ appid }: GameDetailProps) {
           description={t("regeneratesAcf")}
         />
       </PanelSection>
+
+      {/* Installed Fixes */}
+      {installedFixes.length > 0 && (
+        <PanelSection title={t("installedFixes")}>
+          {installedFixes.map((fix, idx) => (
+            <PanelSectionRow key={idx}>
+              <div>
+                <div style={{ fontSize: "12px", color: "#dcdedf" }}>
+                  {fix.fixType} — {t("fixFiles", fix.filesCount)}
+                </div>
+                <div style={{ fontSize: "11px", color: "#8b929a" }}>
+                  {t("fixApplied", fix.date)}
+                </div>
+              </div>
+            </PanelSectionRow>
+          ))}
+          {installedFixes.length === 1 ? (
+            <ActionButton
+              label={busy === "unfix" ? t("toastFixRemoving") : t("removeFix")}
+              onClick={() => handleRemoveFix(installedFixes[0].date)}
+              variant="danger"
+              disabled={busy === "unfix"}
+            />
+          ) : (
+            <>
+              {installedFixes.map((fix, idx) => (
+                <ActionButton
+                  key={idx}
+                  label={
+                    busy === "unfix"
+                      ? t("toastFixRemoving")
+                      : `${t("removeFix")} — ${fix.fixType}`
+                  }
+                  onClick={() => handleRemoveFix(fix.date)}
+                  variant="danger"
+                  disabled={busy === "unfix"}
+                />
+              ))}
+              <ActionButton
+                label={busy === "unfix" ? t("toastFixRemoving") : t("removeAllFixes")}
+                onClick={() => handleRemoveFix()}
+                variant="danger"
+                disabled={busy === "unfix"}
+              />
+            </>
+          )}
+        </PanelSection>
+      )}
 
       {/* Danger zone */}
       <PanelSection title={t("dangerZone")}>
