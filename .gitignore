@@ -5,3 +5,5 @@ __pycache__/
 .claude/
 tmpclaude-*
 askpass.sh
+deploy.sh
+deploy.bat

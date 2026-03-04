@@ -20,6 +20,7 @@ import {
   getSlsPlayStatus,
   setSlsPlayStatus,
 } from "../api";
+import { getLanguage, setLanguage } from "../i18n";
 
 export function Settings() {
   const [ryuCookie, setRyuCookie] = useState("");
@@ -29,6 +30,7 @@ export function Settings() {
   const [platform, setPlatform] = useState<any>(null);
   const [playNotOwned, setPlayNotOwned] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [lang, setLang] = useState(getLanguage());
 
   useEffect(() => {
     const load = async () => {
@@ -202,6 +204,26 @@ export function Settings() {
           >
             {installing ? "Installing..." : "Install / Reinstall Dependencies"}
           </ButtonItem>
+        </PanelSectionRow>
+      </PanelSection>
+
+      <PanelSection title="Language / Idioma">
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={() => {
+              const next = lang === "en" ? "pt-BR" : "en";
+              setLanguage(next as any);
+              setLang(next as any);
+            }}
+          >
+            {lang === "en" ? "Português (BR)" : "English"}
+          </ButtonItem>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <div style={{ fontSize: "11px", color: "#8b929a", textAlign: "center" }}>
+            {lang === "en" ? "Current: English" : "Atual: Português (BR)"}
+          </div>
         </PanelSectionRow>
       </PanelSection>
 
