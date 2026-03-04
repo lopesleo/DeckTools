@@ -433,32 +433,76 @@ def _load_launcher_path() -> str:
 # Game install directory resolution
 # ---------------------------------------------------------------------------
 
-def _determine_install_dir(appid: int, game_name: str) -> str:
-    """Determine the directory to download game files into."""
+async def _fetch_installdir_from_api(appid: int) -> str:
+    """Fetch the official installdir from Steam's store API (like ACCELA does)."""
+    try:
+        client = await ensure_http_client("steam_api")
+        url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
+        resp = await client.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            app_data = data.get(str(appid), {})
+            if app_data.get("success"):
+                install_dir = app_data.get("data", {}).get("install_dir")
+                if install_dir:
+                    logger.info(f"QuickAccela: installdir from Steam API: {install_dir}")
+                    return install_dir
+    except Exception as e:
+        logger.debug(f"QuickAccela: Failed to fetch installdir from API: {e}")
+    return ""
+
+
+async def _determine_install_dir(appid: int, game_name: str) -> str:
+    """Determine the directory to download game files into (like ACCELA).
+
+    Priority: Steam API installdir > existing directory on disk > ACF > game name.
+    """
     steam_path = detect_steam_install_path()
     if not steam_path:
         steam_path = "/home/deck/.local/share/Steam"
+    common_path = os.path.join(steam_path, "steamapps", "common")
 
-    # Try reading existing appmanifest for the installdir
-    acf_path = os.path.join(steam_path, "steamapps", f"appmanifest_{appid}.acf")
-    if os.path.exists(acf_path):
-        try:
-            with open(acf_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            m = re.search(r'"installdir"\s+"([^"]+)"', content)
-            if m:
-                install_dir = m.group(1)
-                full_path = os.path.join(steam_path, "steamapps", "common", install_dir)
-                logger.info(f"QuickAccela: Install dir from appmanifest: {full_path}")
-                return full_path
-        except Exception:
-            pass
+    # 1. Try Steam API for official installdir (like ACCELA's steam_api.py)
+    api_installdir = await _fetch_installdir_from_api(appid)
+    if api_installdir:
+        full_path = os.path.join(common_path, api_installdir)
+        logger.info(f"QuickAccela: Install dir from Steam API: {full_path}")
+        return full_path
 
-    # Fallback: use game name as directory name
+    # 2. Check if a directory already exists on disk matching the game
+    if os.path.isdir(common_path):
+        # Check ACF installdir first
+        acf_path = os.path.join(steam_path, "steamapps", f"appmanifest_{appid}.acf")
+        if os.path.exists(acf_path):
+            try:
+                with open(acf_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                m = re.search(r'"installdir"\s+"([^"]+)"', content)
+                if m:
+                    acf_dir = m.group(1)
+                    full_path = os.path.join(common_path, acf_dir)
+                    if os.path.isdir(full_path):
+                        logger.info(f"QuickAccela: Install dir from ACF (verified on disk): {full_path}")
+                        return full_path
+                    # ACF dir doesn't exist — scan for similar directories
+                    logger.info(f"QuickAccela: ACF installdir '{acf_dir}' not found on disk, scanning...")
+            except Exception:
+                pass
+
+        # Scan common/ for directories matching game name
+        game_lower = game_name.lower()
+        for d in os.listdir(common_path):
+            if d.lower().startswith(game_lower[:20]) or game_lower.startswith(d.lower()[:20]):
+                candidate = os.path.join(common_path, d)
+                if os.path.isdir(candidate):
+                    logger.info(f"QuickAccela: Install dir matched on disk: {candidate}")
+                    return candidate
+
+    # 3. Fallback: use game name as directory name
     safe_name = re.sub(r'[<>:"/\\|?*]', '', game_name).strip()
     if not safe_name:
         safe_name = f"app_{appid}"
-    full_path = os.path.join(steam_path, "steamapps", "common", safe_name)
+    full_path = os.path.join(common_path, safe_name)
     logger.info(f"QuickAccela: Install dir from game name: {full_path}")
     return full_path
 
@@ -754,69 +798,225 @@ def _get_dir_size(path: str) -> int:
     return total
 
 
-def _update_appmanifest(appid: int, install_dir: str, depots: list[dict]) -> None:
-    """Update the appmanifest ACF file so Steam recognizes the game as installed."""
+def _chmod_linux_binaries(install_dir: str) -> None:
+    """Set executable permissions on Linux binaries (like ACCELA's _run_chmod_recursive)."""
+    import stat
+    if not os.path.isdir(install_dir):
+        return
+    chmod_count = 0
+    # Known Linux binary extensions and ELF magic
+    binary_exts = {".sh", ".x86", ".x86_64", ".so", ""}
+    for dirpath, _dirnames, filenames in os.walk(install_dir):
+        for fname in filenames:
+            fpath = os.path.join(dirpath, fname)
+            try:
+                _, ext = os.path.splitext(fname)
+                should_chmod = False
+                if ext.lower() in (".sh", ".x86", ".x86_64"):
+                    should_chmod = True
+                elif ext == "":
+                    # Check if ELF binary
+                    try:
+                        with open(fpath, "rb") as bf:
+                            magic = bf.read(4)
+                        if magic == b"\x7fELF":
+                            should_chmod = True
+                    except Exception:
+                        pass
+                if should_chmod:
+                    st = os.stat(fpath)
+                    new_mode = st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                    if new_mode != st.st_mode:
+                        os.chmod(fpath, new_mode)
+                        chmod_count += 1
+            except Exception:
+                pass
+    if chmod_count > 0:
+        logger.info(f"QuickAccela: Set executable permissions on {chmod_count} files in {install_dir}")
+
+
+def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dict], game_name: str = "") -> None:
+    """Create or overwrite the appmanifest ACF (matching ACCELA's _create_acf_file exactly).
+
+    Key differences from previous version:
+    - InstalledDepots is EMPTY on Linux (ACCELA line 770)
+    - Adds platform_override for Windows depots on Linux
+    - Calls chmod on Linux binaries
+    - Triggers Steam restart
+    """
     steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
     acf_path = os.path.join(steam_path, "steamapps", f"appmanifest_{appid}.acf")
 
-    if not os.path.exists(acf_path):
-        logger.warning(f"QuickAccela: appmanifest not found at {acf_path}, skipping update")
-        return
+    # Derive installdir from actual download directory basename
+    install_folder_name = os.path.basename(install_dir.rstrip("/\\"))
+    if not install_folder_name:
+        install_folder_name = f"app_{appid}"
 
-    try:
-        with open(acf_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except Exception as e:
-        logger.error(f"QuickAccela: Failed to read appmanifest: {e}")
-        return
+    # Resolve game name: param > existing ACF > fallback
+    if not game_name and os.path.exists(acf_path):
+        try:
+            with open(acf_path, "r", encoding="utf-8") as f:
+                old = f.read()
+            m = re.search(r'"name"\s+"([^"]+)"', old)
+            if m:
+                game_name = m.group(1)
+        except Exception:
+            pass
+    if not game_name:
+        game_name = install_folder_name
 
-    # Calculate size on disk
     size_on_disk = _get_dir_size(install_dir)
 
-    # Update StateFlags to 4 (fully installed)
-    content = re.sub(r'"StateFlags"\s+"[^"]+"', '"StateFlags"\t\t"4"', content)
+    # InstalledDepots — ACCELA leaves it empty on Linux (line 770 in task_manager.py)
+    installed_depots_str = '\t"InstalledDepots"\n\t{\n\t}'
 
-    # Update UpdateResult to 0
-    content = re.sub(r'"UpdateResult"\s+"[^"]+"', '"UpdateResult"\t\t"0"', content)
+    # Platform config — detect if game has Windows .exe files (needs Proton override)
+    # Like ACCELA: Windows depots on Linux get platform_override; native Linux gets empty config
+    has_exe = False
+    has_linux_binary = False
+    if os.path.isdir(install_dir):
+        for fname in os.listdir(install_dir):
+            fl = fname.lower()
+            if fl.endswith(".exe"):
+                has_exe = True
+            if fl.endswith(".sh") or fl.endswith(".x86_64") or fl.endswith(".x86"):
+                has_linux_binary = True
 
-    # Update SizeOnDisk
-    content = re.sub(r'"SizeOnDisk"\s+"[^"]+"', f'"SizeOnDisk"\t\t"{size_on_disk}"', content)
+    if has_exe and not has_linux_binary:
+        # Windows game on Linux — needs Proton (like ACCELA line 719-730)
+        platform_config = (
+            '\t"UserConfig"\n'
+            '\t{\n'
+            '\t\t"platform_override_dest"\t\t"linux"\n'
+            '\t\t"platform_override_source"\t\t"windows"\n'
+            '\t}\n'
+            '\t"MountedConfig"\n'
+            '\t{\n'
+            '\t\t"platform_override_dest"\t\t"linux"\n'
+            '\t\t"platform_override_source"\t\t"windows"\n'
+            '\t}'
+        )
+    else:
+        # Native Linux or unknown — empty config (ACCELA line 733/738)
+        platform_config = '\t"UserConfig"\n\t{\n\t}\n\t"MountedConfig"\n\t{\n\t}'
 
-    # Update LastUpdated to current timestamp
-    import time as _time
-    now = str(int(_time.time()))
-    content = re.sub(r'"LastUpdated"\s+"[^"]+"', f'"LastUpdated"\t\t"{now}"', content)
-
-    # Build InstalledDepots section
-    depot_entries = []
-    for depot_info in depots:
-        depot_id = depot_info["depot"]
-        manifest_id = depot_info["manifest"]
-        depot_entries.append(f'\t\t"{depot_id}"\n\t\t{{\n\t\t\t"manifest"\t\t"{manifest_id}"\n\t\t\t"size"\t\t"{size_on_disk}"\n\t\t}}')
-
-    installed_depots_block = "\n".join(depot_entries)
-
-    # Replace InstalledDepots section (including empty ones)
-    content = re.sub(
-        r'"InstalledDepots"\s*\{[^}]*\}',
-        f'"InstalledDepots"\n\t{{\n{installed_depots_block}\n\t}}',
-        content,
+    acf_content = (
+        '"AppState"\n'
+        "{\n"
+        f'\t"appid"\t\t"{appid}"\n'
+        f'\t"Universe"\t\t"1"\n'
+        f'\t"name"\t\t"{game_name}"\n'
+        f'\t"StateFlags"\t\t"4"\n'
+        f'\t"installdir"\t\t"{install_folder_name}"\n'
+        f'\t"SizeOnDisk"\t\t"{size_on_disk}"\n'
+        f'\t"buildid"\t\t"0"\n'
+        f"{installed_depots_str}\n"
+        f"{platform_config}\n"
+        "}"
     )
 
     try:
+        os.makedirs(os.path.dirname(acf_path), exist_ok=True)
         tmp_path = acf_path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(content)
+            f.write(acf_content)
         os.replace(tmp_path, acf_path)
-        # Fix ownership so Steam (deck user) can read it
         try:
             import subprocess
             subprocess.run(["chown", "deck:deck", acf_path], timeout=10, capture_output=True)
         except Exception:
             pass
-        logger.info(f"QuickAccela: Updated appmanifest {acf_path}: StateFlags=4, SizeOnDisk={size_on_disk}, {len(depots)} depot(s)")
+        logger.info(
+            f"QuickAccela: Created appmanifest {acf_path}: "
+            f"installdir={install_folder_name}, StateFlags=4, "
+            f"SizeOnDisk={size_on_disk}, platform={'windows_override' if has_exe and not has_linux_binary else 'native'}"
+        )
     except Exception as e:
         logger.error(f"QuickAccela: Failed to write appmanifest: {e}")
+
+    # Set executable permissions for Linux binaries (like ACCELA's _set_linux_binary_permissions)
+    _chmod_linux_binaries(install_dir)
+
+
+async def repair_appmanifest(appid: int) -> dict:
+    """Repair a broken appmanifest ACF for an existing game (without re-downloading).
+
+    This mirrors what ACCELA does: create a correct ACF from scratch,
+    set Linux binary permissions, and restart Steam.
+    """
+    steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
+    common_path = os.path.join(steam_path, "steamapps", "common")
+
+    # Find the actual game directory
+    install_dir = ""
+    game_name = ""
+
+    # Try Steam API first for official installdir
+    api_installdir = await _fetch_installdir_from_api(appid)
+    if api_installdir:
+        candidate = os.path.join(common_path, api_installdir)
+        if os.path.isdir(candidate):
+            install_dir = candidate
+            logger.info(f"QuickAccela: repair - found dir via API: {install_dir}")
+
+    # Try reading existing ACF for installdir and name
+    acf_path = os.path.join(steam_path, "steamapps", f"appmanifest_{appid}.acf")
+    if os.path.exists(acf_path):
+        try:
+            with open(acf_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            m_name = re.search(r'"name"\s+"([^"]+)"', content)
+            if m_name:
+                game_name = m_name.group(1)
+            if not install_dir:
+                m_dir = re.search(r'"installdir"\s+"([^"]+)"', content)
+                if m_dir:
+                    candidate = os.path.join(common_path, m_dir.group(1))
+                    if os.path.isdir(candidate):
+                        install_dir = candidate
+        except Exception:
+            pass
+
+    # Scan common/ if still not found
+    if not install_dir:
+        try:
+            fetched_name = await fetch_app_name(appid)
+        except Exception:
+            fetched_name = ""
+        if fetched_name:
+            game_name = game_name or fetched_name
+            # Search by name match
+            if os.path.isdir(common_path):
+                name_lower = fetched_name.lower()
+                for d in os.listdir(common_path):
+                    if d.lower().startswith(name_lower[:15]) or name_lower.startswith(d.lower()[:15]):
+                        candidate = os.path.join(common_path, d)
+                        if os.path.isdir(candidate):
+                            install_dir = candidate
+                            break
+
+    if not install_dir:
+        return {"success": False, "error": f"Game directory not found for AppID {appid}"}
+
+    if not game_name:
+        game_name = os.path.basename(install_dir)
+
+    # Parse lua for depot info (may be empty — that's OK, ACCELA uses empty InstalledDepots on Linux)
+    lua_path = os.path.join(steam_path, "config", "stplug-in", f"{appid}.lua")
+    depots = _parse_lua_depots(lua_path) if os.path.exists(lua_path) else []
+
+    # Create the ACF (matching ACCELA)
+    _create_or_update_appmanifest(appid, install_dir, depots, game_name)
+
+    # Restart Steam so it reads the fresh ACF
+    asyncio.ensure_future(_restart_steam_delayed(3))
+
+    return {
+        "success": True,
+        "installdir": os.path.basename(install_dir),
+        "game_name": game_name,
+        "message": "Appmanifest repaired. Steam will restart.",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -963,7 +1163,7 @@ async def _download_zip_for_app(appid: int) -> None:
 
                         depots = _parse_lua_depots(lua_path) if os.path.exists(lua_path) else []
                         if depots:
-                            install_dir = _determine_install_dir(appid, fetched_name)
+                            install_dir = await _determine_install_dir(appid, fetched_name)
                             logger.info(f"QuickAccela: Starting depot download - {len(depots)} depot(s) -> {install_dir}")
                             await _run_depot_download(appid, depots, install_dir)
 
@@ -975,9 +1175,9 @@ async def _download_zip_for_app(appid: int) -> None:
                             if cur_state.get("status") == "failed":
                                 return
 
-                            # Update appmanifest so Steam recognizes the game as installed
+                            # Create/overwrite appmanifest so Steam recognizes the game as installed
                             try:
-                                _update_appmanifest(appid, install_dir, depots)
+                                _create_or_update_appmanifest(appid, install_dir, depots, fetched_name)
                             except Exception as acf_exc:
                                 logger.warning(f"QuickAccela: appmanifest update error: {acf_exc}")
                         else:
@@ -989,10 +1189,10 @@ async def _download_zip_for_app(appid: int) -> None:
                         _set_download_state(appid, {"status": "failed", "error": f"Game download failed: {depot_exc}"})
                         return
 
-                    _set_download_state(appid, {"status": "done", "success": True, "api": name})
-
-                    # Restart Steam so it picks up the new appmanifest
+                    # Restart Steam so it reads the fresh ACF (like ACCELA)
                     asyncio.ensure_future(_restart_steam_delayed(5))
+
+                    _set_download_state(appid, {"status": "done", "success": True, "api": name})
                     return
                 except Exception as install_exc:
                     if isinstance(install_exc, RuntimeError) and str(install_exc) == "cancelled":
@@ -1046,6 +1246,17 @@ def get_download_status(appid: int) -> dict:
     except Exception:
         return {"success": False, "error": "Invalid appid"}
     return {"success": True, "state": _get_download_state(appid)}
+
+
+def get_active_downloads() -> dict:
+    """Return all downloads that are still in progress (not terminal)."""
+    active = {}
+    terminal = {"done", "failed", "cancelled"}
+    for appid, state in DOWNLOAD_STATE.items():
+        status = state.get("status")
+        if status and status not in terminal:
+            active[str(appid)] = state.copy()
+    return {"success": True, "downloads": active}
 
 
 def cancel_download(appid: int) -> dict:

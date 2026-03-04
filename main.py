@@ -128,6 +128,10 @@ class Plugin:
         from downloads import get_download_status
         return _j(get_download_status(appid))
 
+    async def get_active_downloads(self) -> str:
+        from downloads import get_active_downloads
+        return _j(get_active_downloads())
+
     async def cancel_download(self, appid: int) -> str:
         from downloads import cancel_download
         return _j(cancel_download(appid))
@@ -305,6 +309,46 @@ class Plugin:
     async def save_workshop_tool_path(self, path: str) -> str:
         from workshop import save_workshop_tool_path
         return _j(save_workshop_tool_path(path))
+
+    # ==========================================================================
+    # Repair / Maintenance
+    # ==========================================================================
+
+    async def repair_appmanifest(self, appid: int) -> str:
+        from downloads import repair_appmanifest
+        return _j(await repair_appmanifest(appid))
+
+    # ==========================================================================
+    # Store AppID Detection
+    # ==========================================================================
+
+    async def detect_store_appid(self) -> str:
+        """Query CEF debug endpoint to detect AppID from open Steam Store or library pages."""
+        import re
+        try:
+            from http_client import get_http_client
+            client = await get_http_client()
+            resp = await client.get("http://localhost:8080/json", timeout=3)
+            if resp.status_code == 200:
+                pages = resp.json()
+                # Prioritize store pages, then library pages
+                patterns = [
+                    (r"store\.steampowered\.com/app/(\d+)", "store"),
+                    (r"steamloopback\.host/routes/library/app/(\d+)", "library"),
+                    (r"/library/app/(\d+)", "library"),
+                ]
+                for pattern, source in patterns:
+                    for page in pages:
+                        url = page.get("url", "")
+                        m = re.search(pattern, url)
+                        if m:
+                            appid = int(m.group(1))
+                            title = page.get("title", "")
+                            return _j({"success": True, "appid": appid, "title": title, "source": source})
+            return _j({"success": False, "error": "No store page found"})
+        except Exception as exc:
+            logger.debug(f"QuickAccela: detect_store_appid error: {exc}")
+            return _j({"success": False, "error": str(exc)})
 
     # ==========================================================================
     # Installer (Dependencies)

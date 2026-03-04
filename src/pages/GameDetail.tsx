@@ -29,6 +29,7 @@ import {
   applyLinuxNativeFix,
   uninstallGameFull,
   fetchAppName,
+  repairAppmanifest,
 } from "../api";
 
 interface GameDetailProps {
@@ -75,7 +76,11 @@ export function GameDetail({ appid }: GameDetailProps) {
 
       // Check download status
       const dlStatus = await getDownloadStatus(appid);
-      if (dlStatus.success && dlStatus.state && Object.keys(dlStatus.state).length > 0) {
+      if (
+        dlStatus.success &&
+        dlStatus.state &&
+        Object.keys(dlStatus.state).length > 0
+      ) {
         setDownloadState(dlStatus.state);
       }
     };
@@ -84,7 +89,10 @@ export function GameDetail({ appid }: GameDetailProps) {
 
   // Poll download status
   useEffect(() => {
-    if (!downloadState || ["done", "failed", "cancelled"].includes(downloadState.status)) {
+    if (
+      !downloadState ||
+      ["done", "failed", "cancelled"].includes(downloadState.status)
+    ) {
       return;
     }
     const interval = setInterval(async () => {
@@ -102,7 +110,10 @@ export function GameDetail({ appid }: GameDetailProps) {
 
   // Poll fix status
   useEffect(() => {
-    if (!fixStatus || ["done", "failed", "cancelled"].includes(fixStatus.status)) {
+    if (
+      !fixStatus ||
+      ["done", "failed", "cancelled"].includes(fixStatus.status)
+    ) {
       return;
     }
     const interval = setInterval(async () => {
@@ -190,7 +201,13 @@ export function GameDetail({ appid }: GameDetailProps) {
       setMessage("Install path not found");
       return;
     }
-    const result = await applyGameFix(appid, url, installPath, fixType, gameName);
+    const result = await applyGameFix(
+      appid,
+      url,
+      installPath,
+      fixType,
+      gameName,
+    );
     if (result.success) {
       setFixStatus({ status: "queued" });
     }
@@ -202,21 +219,40 @@ export function GameDetail({ appid }: GameDetailProps) {
       return;
     }
     const result = await applyLinuxNativeFix(installPath);
-    setMessage(result.success ? `Permissions set on ${result.count} files` : result.error);
+    setMessage(
+      result.success
+        ? `Permissions set on ${result.count} files`
+        : result.error,
+    );
   };
 
   const handleUninstall = async () => {
+    setMessage("Uninstalling...");
     const result = await uninstallGameFull(appid);
     if (result.success) {
       setHasLua(false);
-      setMessage("Game uninstalled");
-      Navigation.NavigateBack();
+      setFakeAppId(false);
+      setHasToken(false);
+      setHasDlcs(false);
+      const removed = result.removed || [];
+      const hasFiles = removed.includes("game_files");
+      const errors = result.errors || [];
+      if (errors.length > 0) {
+        setMessage(`Uninstalled (with warnings: ${errors.join(", ")})`);
+      } else if (!hasFiles) {
+        setMessage("Config removed (no game files found to delete)");
+      } else {
+        setMessage("Game fully uninstalled");
+      }
+      setTimeout(() => Navigation.NavigateBack(), 2000);
     } else {
       setMessage(result.error || "Uninstall failed");
     }
   };
 
-  const isDownloading = downloadState && !["done", "failed", "cancelled", undefined].includes(downloadState.status);
+  const isDownloading =
+    downloadState &&
+    !["done", "failed", "cancelled", undefined].includes(downloadState.status);
 
   return (
     <>
@@ -233,7 +269,13 @@ export function GameDetail({ appid }: GameDetailProps) {
         </PanelSectionRow>
         {installPath && (
           <PanelSectionRow>
-            <div style={{ fontSize: "11px", color: "#8b929a", wordBreak: "break-all" }}>
+            <div
+              style={{
+                fontSize: "11px",
+                color: "#8b929a",
+                wordBreak: "break-all",
+              }}
+            >
               {installPath}
             </div>
           </PanelSectionRow>
@@ -260,7 +302,11 @@ export function GameDetail({ appid }: GameDetailProps) {
                 />
               </PanelSectionRow>
             )}
-            <ActionButton label="Cancel Download" onClick={handleCancel} variant="danger" />
+            <ActionButton
+              label="Cancel Download"
+              onClick={handleCancel}
+              variant="danger"
+            />
           </>
         ) : (
           <ActionButton
@@ -271,7 +317,9 @@ export function GameDetail({ appid }: GameDetailProps) {
         )}
         {downloadState?.status === "done" && (
           <PanelSectionRow>
-            <div style={{ color: "#00cc00", fontSize: "12px" }}>Download complete!</div>
+            <div style={{ color: "#00cc00", fontSize: "12px" }}>
+              Download complete!
+            </div>
           </PanelSectionRow>
         )}
         {downloadState?.status === "failed" && (
@@ -307,20 +355,26 @@ export function GameDetail({ appid }: GameDetailProps) {
             {fixes.genericFix?.available && (
               <ActionButton
                 label="Apply Generic Fix"
-                onClick={() => handleApplyFix(fixes.genericFix.url, "Generic Fix")}
+                onClick={() =>
+                  handleApplyFix(fixes.genericFix.url, "Generic Fix")
+                }
                 variant="primary"
               />
             )}
             {fixes.onlineFix?.available && (
               <ActionButton
                 label="Apply Online Fix (Unsteam)"
-                onClick={() => handleApplyFix(fixes.onlineFix.url, "Online Fix (Unsteam)")}
+                onClick={() =>
+                  handleApplyFix(fixes.onlineFix.url, "Online Fix (Unsteam)")
+                }
                 variant="primary"
               />
             )}
             {!fixes.genericFix?.available && !fixes.onlineFix?.available && (
               <PanelSectionRow>
-                <div style={{ color: "#8b929a", fontSize: "12px" }}>No fixes available</div>
+                <div style={{ color: "#8b929a", fontSize: "12px" }}>
+                  No fixes available
+                </div>
               </PanelSectionRow>
             )}
           </>
@@ -334,13 +388,33 @@ export function GameDetail({ appid }: GameDetailProps) {
             />
           </PanelSectionRow>
         )}
-        <ActionButton label="Apply Linux Native Fix (chmod)" onClick={handleNativeFix} />
+        <ActionButton
+          label="Apply Linux Native Fix (chmod)"
+          onClick={handleNativeFix}
+        />
+        <ActionButton
+          label="Repair Appmanifest (ACF)"
+          onClick={async () => {
+            setMessage("Repairing ACF...");
+            const result = await repairAppmanifest(appid);
+            setMessage(
+              result.success
+                ? result.message || "ACF repaired. Steam will restart."
+                : result.error || "Repair failed",
+            );
+          }}
+          description="Regenerates ACF and restarts Steam"
+        />
       </PanelSection>
 
       {/* Danger zone */}
       <PanelSection title="Danger Zone">
         {hasLua && (
-          <ActionButton label="Remove Lua Script" onClick={handleDelete} variant="danger" />
+          <ActionButton
+            label="Remove Lua Script"
+            onClick={handleDelete}
+            variant="danger"
+          />
         )}
         <ActionButton
           label="Full Uninstall"
@@ -354,7 +428,13 @@ export function GameDetail({ appid }: GameDetailProps) {
       {message && (
         <PanelSection>
           <PanelSectionRow>
-            <div style={{ fontSize: "12px", color: "#dcdedf", textAlign: "center" }}>
+            <div
+              style={{
+                fontSize: "12px",
+                color: "#dcdedf",
+                textAlign: "center",
+              }}
+            >
               {message}
             </div>
           </PanelSectionRow>

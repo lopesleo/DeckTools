@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   PanelSection,
   PanelSectionRow,
@@ -10,7 +10,9 @@ import { GameCard, GameInfo } from "../components/GameCard";
 import {
   getInstalledLuaScripts,
   getDownloadStatus,
+  getActiveDownloads,
   startDownload,
+  detectStoreAppid,
 } from "../api";
 import { ROUTE_GAME_DETAIL, ROUTE_SETTINGS, ROUTE_DOWNLOADS } from "../routes";
 
@@ -20,6 +22,8 @@ export function GameList() {
   const [loading, setLoading] = useState(true);
   const [addAppId, setAddAppId] = useState("");
   const [addStatus, setAddStatus] = useState("");
+  const [activeDownloadId, setActiveDownloadId] = useState<number | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadGames = useCallback(async () => {
     try {
@@ -48,37 +52,148 @@ export function GameList() {
     }
   }, []);
 
+  // Format download status from backend state
+  const formatStatus = useCallback((st: any): string => {
+    const phase = st.status || "unknown";
+    if (phase === "downloading") {
+      const total = st.totalBytes || 0;
+      const read = st.bytesRead || 0;
+      if (total > 0) {
+        const pct = Math.round((read / total) * 100);
+        return `Downloading... ${pct}%`;
+      }
+      const kb = Math.round(read / 1024);
+      return `Downloading... ${kb} KB`;
+    } else if (phase === "checking") {
+      return `Checking ${st.currentApi || "APIs"}...`;
+    } else if (phase === "processing") {
+      return "Processing manifest...";
+    } else if (phase === "configuring") {
+      return "Configuring SLSsteam...";
+    } else if (phase === "depot_download") {
+      return `Downloading game: ${st.depotProgress || "Downloading game files..."}`;
+    } else if (phase === "installing") {
+      return "Installing...";
+    } else if (phase === "queued") {
+      return "Starting download...";
+    }
+    return `${phase}...`;
+  }, []);
+
+  // Start polling for a given appid
+  const startPolling = useCallback((id: number) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    setActiveDownloadId(id);
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await getDownloadStatus(id);
+        if (!status.success || !status.state) return;
+        const st = status.state;
+        const phase = st.status || "unknown";
+
+        if (phase === "done") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setAddStatus("Done! Restart Steam to see the game.");
+          setActiveDownloadId(null);
+          setTimeout(() => {
+            loadGames();
+            setAddStatus("");
+          }, 6000);
+        } else if (phase === "failed") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setAddStatus(st.error || "Download failed");
+          setActiveDownloadId(null);
+        } else if (phase === "cancelled") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setAddStatus("Download cancelled");
+          setActiveDownloadId(null);
+        } else {
+          setAddStatus(formatStatus(st));
+        }
+      } catch {
+        // ignore poll errors
+      }
+    }, 500);
+
+    // Safety timeout: stop polling after 60 minutes
+    setTimeout(() => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = null;
+    }, 3600000);
+  }, [formatStatus, loadGames]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  // On mount: check for active downloads and resume polling + auto-detect appid
   useEffect(() => {
     loadGames();
-  }, [loadGames]);
 
-  // Poll download status for active downloads
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      let updated = false;
-      const newGames = [...games];
-      for (let i = 0; i < newGames.length; i++) {
-        const g = newGames[i];
-        if (
-          g.downloadStatus &&
-          !["done", "failed", "cancelled"].includes(g.downloadStatus)
-        ) {
-          const status = await getDownloadStatus(g.appid);
-          if (status.success && status.state) {
-            newGames[i] = {
-              ...g,
-              downloadStatus: status.state.status,
-              downloadProgress: status.state.bytesRead,
-              downloadTotal: status.state.totalBytes,
-            };
-            updated = true;
+    // Auto-detect AppID: prioritize Steam Store page (CEF), fallback to library route
+    const detectAppId = async () => {
+      // 1. Check CEF pages for store or library URLs (backend query)
+      try {
+        const result = await detectStoreAppid();
+        if (result.success && result.appid) {
+          setAddAppId(String(result.appid));
+          return;
+        }
+      } catch {
+        // ignore
+      }
+      // 2. Fallback: check window.location for library route
+      try {
+        const path = window.location.pathname || "";
+        const match = path.match(/\/library\/app\/(\d+)/);
+        if (match) {
+          setAddAppId(match[1]);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    detectAppId();
+
+    // Re-detect when panel becomes visible (QAM reopen)
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") detectAppId();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    // Also poll to catch QAM reopens that don't trigger visibilitychange
+    const redetectInterval = setInterval(detectAppId, 10000);
+    const cleanup1 = () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      clearInterval(redetectInterval);
+    };
+
+    // Resume active downloads
+    (async () => {
+      try {
+        const result = await getActiveDownloads();
+        if (result.success && result.downloads) {
+          const ids = Object.keys(result.downloads);
+          if (ids.length > 0) {
+            const id = parseInt(ids[0], 10);
+            const st = result.downloads[ids[0]];
+            setAddStatus(formatStatus(st));
+            startPolling(id);
           }
         }
+      } catch {
+        // ignore
       }
-      if (updated) setGames(newGames);
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [games]);
+    })();
+
+    return () => cleanup1();
+  }, [loadGames, formatStatus, startPolling]);
 
   const handleAddGame = async () => {
     const id = parseInt(addAppId.trim(), 10);
@@ -94,61 +209,7 @@ export function GameList() {
         return;
       }
       setAddAppId("");
-
-      // Poll download status until done
-      const pollInterval = setInterval(async () => {
-        try {
-          const status = await getDownloadStatus(id);
-          if (!status.success || !status.state) return;
-          const st = status.state;
-          const phase = st.status || "unknown";
-
-          if (phase === "downloading") {
-            const total = st.totalBytes || 0;
-            const read = st.bytesRead || 0;
-            if (total > 0) {
-              const pct = Math.round((read / total) * 100);
-              setAddStatus(`Downloading... ${pct}%`);
-            } else {
-              const kb = Math.round(read / 1024);
-              setAddStatus(`Downloading... ${kb} KB`);
-            }
-          } else if (phase === "checking") {
-            setAddStatus(`Checking ${st.currentApi || "APIs"}...`);
-          } else if (phase === "processing") {
-            setAddStatus("Processing manifest...");
-          } else if (phase === "configuring") {
-            setAddStatus("Configuring SLSsteam...");
-          } else if (phase === "depot_download") {
-            const depotPct = st.depotPercent || 0;
-            const depotProg = st.depotProgress || "Downloading game files...";
-            if (depotPct > 0) {
-              setAddStatus(`Downloading game: ${depotProg}`);
-            } else {
-              setAddStatus(`Downloading game: ${depotProg}`);
-            }
-          } else if (phase === "installing") {
-            setAddStatus("Installing...");
-          } else if (phase === "done") {
-            clearInterval(pollInterval);
-            setAddStatus("Done! Restarting Steam...");
-            setTimeout(() => {
-              loadGames();
-              setAddStatus("");
-            }, 6000);
-          } else if (phase === "failed") {
-            clearInterval(pollInterval);
-            setAddStatus(st.error || "Download failed");
-          } else {
-            setAddStatus(`${phase}...`);
-          }
-        } catch {
-          // ignore poll errors
-        }
-      }, 500);
-
-      // Safety timeout: stop polling after 60 minutes (game downloads can be large)
-      setTimeout(() => clearInterval(pollInterval), 3600000);
+      startPolling(id);
     } catch (err: any) {
       setAddStatus("Error: " + (err?.message || String(err)));
     }

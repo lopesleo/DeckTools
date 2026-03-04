@@ -47,6 +47,9 @@ export const startDownload = async (appid: number) =>
 export const getDownloadStatus = async (appid: number) =>
   parseResult(await call<[number], string>("get_download_status", appid));
 
+export const getActiveDownloads = async () =>
+  parseResult(await call<[], string>("get_active_downloads"));
+
 export const cancelDownload = async (appid: number) =>
   parseResult(await call<[number], string>("cancel_download", appid));
 
@@ -202,6 +205,14 @@ export const cancelWorkshopDownload = async () =>
 
 export const saveWorkshopToolPath = async (path: string) =>
   parseResult(await call<[string], string>("save_workshop_tool_path", path));
+
+// Repair / Maintenance
+export const repairAppmanifest = async (appid: number) =>
+  parseResult(await call<[number], string>("repair_appmanifest", appid));
+
+// Store AppID Detection
+export const detectStoreAppid = async () =>
+  parseResult(await call<[], string>("detect_store_appid"));
 
 // Dependencies
 export const checkDependencies = async () =>

@@ -42,9 +42,16 @@ def add_fake_app_id(appid: int) -> dict:
         with open(config_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
+        # Map appid to Spacewar (480) so SLSsteam intercepts network calls
+        # and Steam shows a "playing" status instead of "available".
+        # This is how LuaToolsLinux worked — friends see "Playing Spacewar".
+        # Self-mapping (appid: appid) doesn't work because Steam servers
+        # reject ownership for unowned games.
         entry_line = f"  {appid}: 480\n"
+        target = str(appid)
         for line in lines:
-            if str(appid) in line and "480" in line:
+            stripped = line.strip()
+            if stripped.startswith(f"{target}:") or stripped.startswith(f"'{target}':") or stripped.startswith(f'"{target}":'):
                 return {"success": True, "message": "FakeAppId already configured"}
 
         new_lines = []
@@ -65,7 +72,7 @@ def add_fake_app_id(appid: int) -> dict:
         with open(tmp, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
         os.replace(tmp, config_path)
-        return {"success": True, "message": "FakeAppId (480) added!"}
+        return {"success": True, "message": f"FakeAppId ({appid}) added!"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -85,9 +92,8 @@ def remove_fake_app_id(appid: int) -> dict:
         for line in lines:
             stripped = line.strip()
             if (stripped.startswith(f"{target}:") or stripped.startswith(f"'{target}':") or stripped.startswith(f'"{target}":')):
-                if "480" in stripped:
-                    modified = True
-                    continue
+                modified = True
+                continue
             new_lines.append(line)
 
         if modified:
@@ -107,8 +113,21 @@ def check_fake_app_id_status(appid: int) -> dict:
         if not os.path.exists(config_path):
             return {"success": True, "exists": False}
         with open(config_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        return {"success": True, "exists": f"  {appid}: 480" in content}
+            lines = f.readlines()
+        target = str(appid)
+        in_fakeappids = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.lower().startswith("fakeappids:"):
+                in_fakeappids = True
+                continue
+            if in_fakeappids:
+                indent = len(line) - len(line.lstrip())
+                if indent <= 0 and stripped and not stripped.startswith("#"):
+                    in_fakeappids = False
+                elif stripped.startswith(f"{target}:"):
+                    return {"success": True, "exists": True}
+        return {"success": True, "exists": False}
     except Exception:
         return {"success": True, "exists": False}
 
@@ -499,19 +518,89 @@ def _remove_from_additional_apps(appid: int) -> None:
 
 
 def uninstall_game_full(appid: int) -> dict:
+    """Full uninstall: game files, appmanifest, depotcache manifests, lua, and all SLSsteam config entries."""
+    removed = []
+    errors = []
+
     try:
+        # 1. Find and remove game files + appmanifest
         path_info = get_game_install_path_response(appid)
         install_path = path_info.get("installPath") if isinstance(path_info, dict) else None
 
         if install_path and os.path.exists(install_path):
             shutil.rmtree(install_path, ignore_errors=True)
+            if not os.path.exists(install_path):
+                removed.append("game_files")
+                logger.info(f"QuickAccela: Removed game directory: {install_path}")
+            else:
+                errors.append("Failed to fully remove game directory")
+
             steamapps_dir = os.path.dirname(os.path.dirname(install_path))
             acf_file = os.path.join(steamapps_dir, f"appmanifest_{appid}.acf")
             if os.path.exists(acf_file):
-                os.remove(acf_file)
+                try:
+                    os.remove(acf_file)
+                    removed.append("appmanifest")
+                except Exception as e:
+                    errors.append(f"Failed to remove appmanifest: {e}")
+        else:
+            logger.info(f"QuickAccela: No game directory found for {appid}, skipping file removal")
 
-        delete_luatools_for_app(appid)
-        _remove_from_additional_apps(appid)
-        return {"success": True}
+        # 2. Remove depotcache manifests for this game's depots
+        try:
+            from steam_utils import detect_steam_install_path
+            from downloads import _parse_lua_depots
+            steam_path = detect_steam_install_path()
+            if steam_path:
+                lua_path = os.path.join(steam_path, "config", "stplug-in", f"{appid}.lua")
+                lua_path_disabled = lua_path + ".disabled"
+                actual_lua = lua_path if os.path.exists(lua_path) else (lua_path_disabled if os.path.exists(lua_path_disabled) else None)
+                if actual_lua:
+                    depots = _parse_lua_depots(actual_lua)
+                    depotcache_dir = os.path.join(steam_path, "depotcache")
+                    for depot_info in depots:
+                        manifest_file = os.path.join(depotcache_dir, f"{depot_info['depot']}_{depot_info['manifest']}.manifest")
+                        if os.path.exists(manifest_file):
+                            try:
+                                os.remove(manifest_file)
+                                logger.info(f"QuickAccela: Removed manifest: {manifest_file}")
+                            except Exception:
+                                pass
+                    if depots:
+                        removed.append("depot_manifests")
+        except Exception as e:
+            logger.warning(f"QuickAccela: Depotcache cleanup error: {e}")
+
+        # 3. Remove lua script
+        try:
+            delete_luatools_for_app(appid)
+            removed.append("lua_script")
+        except Exception as e:
+            errors.append(f"Failed to remove lua: {e}")
+
+        # 4. Remove all SLSsteam config entries
+        try:
+            _remove_from_additional_apps(appid)
+            removed.append("additional_apps")
+        except Exception:
+            pass
+        try:
+            remove_fake_app_id(appid)
+            removed.append("fake_app_id")
+        except Exception:
+            pass
+        try:
+            remove_game_token(appid)
+            removed.append("game_token")
+        except Exception:
+            pass
+        try:
+            remove_game_dlcs(appid)
+            removed.append("game_dlcs")
+        except Exception:
+            pass
+
+        logger.info(f"QuickAccela: Uninstall {appid} complete. Removed: {removed}")
+        return {"success": True, "removed": removed, "errors": errors}
     except Exception as e:
         return {"success": False, "error": str(e)}

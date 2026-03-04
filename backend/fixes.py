@@ -443,20 +443,37 @@ def get_installed_fixes() -> dict:
 
 
 def apply_linux_native_fix(install_path: str) -> dict:
-    """Recursively apply execution permissions to all files in game folder."""
+    """Fix permissions for Linux native games: chown to deck + chmod +rwx."""
     import stat
+    import subprocess
     if os.name != "posix":
         return {"success": False, "error": "This fix is for Linux only."}
     if not install_path or not os.path.exists(install_path):
         return {"success": False, "error": "Game path not found."}
     try:
+        # Fix ownership first (Decky runs as root, Steam runs as deck)
+        try:
+            subprocess.run(
+                ["chown", "-R", "deck:deck", install_path],
+                timeout=120, capture_output=True,
+            )
+        except Exception as chown_exc:
+            logger.warning(f"QuickAccela: chown failed for {install_path}: {chown_exc}")
+
         count = 0
         for root, dirs, files in os.walk(install_path):
+            # Directories: rwxr-xr-x (755) for traversal
+            for d in dirs:
+                dp = os.path.join(root, d)
+                try:
+                    os.chmod(dp, 0o755)
+                except Exception:
+                    pass
+            # Files: rwxr-xr-x (755) — read+execute for all
             for name in files:
                 fp = os.path.join(root, name)
                 try:
-                    st = os.stat(fp)
-                    os.chmod(fp, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                    os.chmod(fp, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
                     count += 1
                 except Exception:
                     pass
