@@ -138,6 +138,8 @@ _SYSTEM_CERT_FILES = [
     "/etc/ssl/cert.pem",
     "/etc/ca-certificates/extracted/tls-ca-bundle.pem",
     "/etc/pki/tls/certs/ca-bundle.crt",
+    "/usr/share/ca-certificates/mozilla/",
+    "/etc/ssl/certs/",
 ]
 
 
@@ -149,17 +151,49 @@ def _make_ssl_context() -> ssl.SSLContext:
         ctx.load_default_certs()
     except Exception:
         pass
+
+    # Try certifi as additional source (if installed)
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+        logger.info(f"SSL: loaded certs from certifi ({certifi.where()})")
+        return ctx
+    except Exception:
+        pass
+
     # Explicitly load system cert files to cover PyInstaller edge cases
-    for cert_file in _SYSTEM_CERT_FILES:
-        if os.path.isfile(cert_file):
+    for cert_path in _SYSTEM_CERT_FILES:
+        if os.path.isfile(cert_path):
             try:
-                ctx.load_verify_locations(cafile=cert_file)
-                logger.info(f"SSL: loaded certs from {cert_file}")
+                ctx.load_verify_locations(cafile=cert_path)
+                logger.info(f"SSL: loaded certs from {cert_path}")
                 return ctx
             except Exception:
                 continue
-    # If nothing worked, fall back to unverified (with warning)
-    logger.warning("SSL: no system CA certs found, disabling verification")
+        elif os.path.isdir(cert_path):
+            try:
+                ctx.load_verify_locations(capath=cert_path)
+                logger.info(f"SSL: loaded certs from directory {cert_path}")
+                return ctx
+            except Exception:
+                continue
+
+    # Try Python's own default verify paths as last resort before disabling
+    try:
+        paths = ssl.get_default_verify_paths()
+        if paths.cafile and os.path.isfile(paths.cafile):
+            ctx.load_verify_locations(cafile=paths.cafile)
+            logger.info(f"SSL: loaded certs from default path {paths.cafile}")
+            return ctx
+        if paths.capath and os.path.isdir(paths.capath):
+            ctx.load_verify_locations(capath=paths.capath)
+            logger.info(f"SSL: loaded certs from default dir {paths.capath}")
+            return ctx
+    except Exception:
+        pass
+
+    # Absolute last resort — disable verification with loud warning
+    logger.warning("SSL: SECURITY WARNING — no system CA certs found, disabling verification. HTTPS connections are vulnerable to MITM attacks.")
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE

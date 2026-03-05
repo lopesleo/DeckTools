@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 from typing import Optional
 
 from paths import find_accela_root, find_slssteam_root, check_slssteam_installed, check_accela_installed
@@ -78,8 +79,41 @@ async def install_dependencies() -> dict:
         # The enter-the-wired script is the standard installer
         script_url = "https://raw.githubusercontent.com/Star123451/enter-the-wired/main/install.sh"
 
+        # Download script to temp file first (safer than piping curl to bash)
+        tmp_script = os.path.join(tempfile.gettempdir(), "decktools_install.sh")
+        dl_process = await asyncio.create_subprocess_exec(
+            "curl", "-fsSL", "-o", tmp_script, script_url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        await dl_process.wait()
+        if dl_process.returncode != 0:
+            INSTALL_STATE["status"] = "failed"
+            INSTALL_STATE["error"] = "Failed to download installer script"
+            return {"success": False}
+
+        # Verify it looks like a shell script (not a binary or HTML error page)
+        try:
+            with open(tmp_script, "r", encoding="utf-8", errors="replace") as f:
+                first_line = f.readline(256)
+            if not first_line.startswith("#"):
+                logger.warning(f"Installer script does not start with '#': {first_line[:80]}")
+                INSTALL_STATE["status"] = "failed"
+                INSTALL_STATE["error"] = "Downloaded file does not look like a shell script"
+                try:
+                    os.remove(tmp_script)
+                except Exception:
+                    pass
+                return {"success": False}
+        except Exception as read_exc:
+            INSTALL_STATE["status"] = "failed"
+            INSTALL_STATE["error"] = f"Cannot read installer script: {read_exc}"
+            return {"success": False}
+
+        # Execute the verified script
+        os.chmod(tmp_script, 0o700)
         process = await asyncio.create_subprocess_exec(
-            "bash", "-c", f"curl -fsSL {script_url} | bash",
+            "bash", tmp_script,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -100,6 +134,12 @@ async def install_dependencies() -> dict:
         else:
             INSTALL_STATE["status"] = "failed"
             INSTALL_STATE["error"] = f"Installer exited with code {process.returncode}"
+
+        # Clean up temp script
+        try:
+            os.remove(tmp_script)
+        except Exception:
+            pass
 
     except Exception as exc:
         INSTALL_STATE["status"] = "failed"

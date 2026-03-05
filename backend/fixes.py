@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import posixpath
 import zipfile
 from datetime import datetime
 from typing import Any, Dict
@@ -128,6 +129,18 @@ async def _download_and_extract_fix(appid: int, download_url: str, install_path:
         _set_fix_download_state(appid, {"status": "failed", "error": str(exc)})
 
 
+def _is_path_safe(base_dir: str, member_name: str) -> bool:
+    """Check that a zip member path stays within base_dir (prevents Zip Slip)."""
+    # Normalise the member name and reject absolute paths
+    clean = posixpath.normpath(member_name)
+    if clean.startswith("/") or clean.startswith("\\"):
+        return False
+    # Resolve the final destination and verify it's inside base_dir
+    resolved = os.path.realpath(os.path.join(base_dir, clean))
+    base_resolved = os.path.realpath(base_dir)
+    return resolved.startswith(base_resolved + os.sep) or resolved == base_resolved
+
+
 def _extract_fix_sync(appid: int, dest_zip: str, install_path: str, fix_type: str, game_name: str, download_url: str) -> None:
     """Synchronous extraction of fix zip (runs in executor)."""
     extracted_files = []
@@ -147,6 +160,9 @@ def _extract_fix_sync(appid: int, dest_zip: str, install_path: str, fix_type: st
                     target_path = member[len(appid_folder):]
                     if not target_path:
                         continue
+                    if not _is_path_safe(install_path, target_path):
+                        logger.warning(f"Zip Slip blocked: {member}")
+                        continue
                     source = archive.open(member)
                     target = os.path.join(install_path, target_path)
                     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -158,6 +174,9 @@ def _extract_fix_sync(appid: int, dest_zip: str, install_path: str, fix_type: st
         else:
             for member in archive.namelist():
                 if member.endswith("/"):
+                    continue
+                if not _is_path_safe(install_path, member):
+                    logger.warning(f"Zip Slip blocked: {member}")
                     continue
                 archive.extract(member, install_path)
                 extracted_files.append(member.replace("\\", "/"))
