@@ -21,7 +21,7 @@ try:
     logger = decky.logger
 except ImportError:
     import logging
-    logger = logging.getLogger("quickaccela")
+    logger = logging.getLogger("decktools")
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ class _StreamContext:
 
     def _open(self) -> Any:
         req = urllib.request.Request(self._url, method="GET")
-        req.add_header("User-Agent", "QuickAccela/0.1")
+        req.add_header("User-Agent", "DeckTools/0.1")
         for k, v in self._headers.items():
             req.add_header(k, v)
         ctx = self._ssl_ctx if self._url.startswith("https") else None
@@ -258,7 +258,7 @@ class NativeAsyncClient:
         follow_redirects: bool, headers: Dict[str, str],
     ) -> NativeResponse:
         req = urllib.request.Request(url, method=method)
-        req.add_header("User-Agent", "QuickAccela/0.1")
+        req.add_header("User-Agent", "DeckTools/0.1")
         for k, v in headers.items():
             req.add_header(k, v)
         ctx = self._ssl_ctx if url.startswith("https") else None

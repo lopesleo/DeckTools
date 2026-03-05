@@ -9,6 +9,7 @@ export interface GameInfo {
   hasLua?: boolean;
   isDisabled?: boolean;
   hasGameFiles?: boolean;
+  hasAchievements?: boolean;
   downloadStatus?: string;
   downloadProgress?: number;
   downloadTotal?: number;
@@ -34,7 +35,9 @@ export function GameCard({ game, onClick }: GameCardProps) {
     ? game.isDisabled
       ? t("disabled")
       : game.hasGameFiles
-        ? t("installed")
+        ? game.hasAchievements
+          ? `${t("installed")} · ★`
+          : t("installed")
         : t("manifestOnly")
     : t("pending");
 

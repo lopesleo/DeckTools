@@ -32,9 +32,7 @@ function patchLibraryApp() {
               ret,
               (x: any) =>
                 Array.isArray(x?.props?.children) &&
-                x?.props?.className?.includes(
-                  appDetailsClasses.InnerContainer,
-                ),
+                x?.props?.className?.includes(appDetailsClasses.InnerContainer),
             );
             if (typeof container !== "object" || !container) {
               return ret;
@@ -52,7 +50,7 @@ function patchLibraryApp() {
               );
             }
           } catch (e) {
-            console.error("QuickAccela: library patch error", e);
+            console.error("DeckTools: library patch error", e);
           }
           return ret;
         },
@@ -76,12 +74,12 @@ export default definePlugin(() => {
   routerHook.addRoute(ROUTE_SETTINGS, () => <Settings />);
   routerHook.addRoute(ROUTE_DOWNLOADS, () => <Downloads />);
 
-  // Patch library app detail page to inject "Add via QuickAccela" button
+  // Patch library app detail page to show "Added via DeckTools" badge
   const libraryPatch = patchLibraryApp();
 
   return {
-    name: "QuickAccela",
-    title: <div className={staticClasses.Title}>QuickAccela</div>,
+    name: "DeckTools",
+    title: <div className={staticClasses.Title}>DeckTools</div>,
     content: <GameList />,
     icon: <FaDownload />,
     onDismount() {

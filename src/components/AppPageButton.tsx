@@ -1,6 +1,6 @@
 import { useState, useEffect, FC } from "react";
-import { ButtonItem } from "@decky/ui";
-import { startDownload, getInstalledLuaScripts } from "../api";
+import { getInstalledLuaScripts } from "../api";
+import { useT } from "../i18n";
 
 function useAppIdFromPath(): number {
   const match = window.location.pathname.match(/\/library\/app\/(\d+)/);
@@ -9,10 +9,8 @@ function useAppIdFromPath(): number {
 
 export const AppPageButton: FC = () => {
   const appid = useAppIdFromPath();
-  const [status, setStatus] = useState<
-    "idle" | "downloading" | "done" | "error" | "installed"
-  >("idle");
-  const [msg, setMsg] = useState("");
+  const [installed, setInstalled] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     let cancelled = false;
@@ -22,7 +20,7 @@ export const AppPageButton: FC = () => {
         const result = await getInstalledLuaScripts();
         if (!cancelled && result.success && result.scripts) {
           const found = result.scripts.find((s: any) => s.appid === appid);
-          if (found) setStatus("installed");
+          if (found) setInstalled(true);
         }
       } catch (_) {}
     })();
@@ -31,42 +29,7 @@ export const AppPageButton: FC = () => {
     };
   }, [appid]);
 
-  if (!appid || appid <= 0) return null;
-
-  const handleClick = async () => {
-    setStatus("downloading");
-    setMsg("Downloading manifest...");
-    try {
-      const result = await startDownload(appid);
-      if (result.success) {
-        setStatus("done");
-        setMsg("Download started!");
-      } else {
-        setStatus("error");
-        setMsg(result.error || "Failed");
-      }
-    } catch (err: any) {
-      setStatus("error");
-      setMsg(err?.message || "Error");
-    }
-  };
-
-  const label =
-    status === "installed"
-      ? "Added via QuickAccela"
-      : status === "downloading"
-        ? "Downloading..."
-        : status === "done"
-          ? "Download started!"
-          : status === "error"
-            ? msg
-            : "Add via QuickAccela";
-
-  const isError =
-    status === "error" ||
-    label === "Invalid AppID" ||
-    label === "Download failed";
-  const isSuccess = status === "installed" || status === "done";
+  if (!appid || appid <= 0 || !installed) return null;
 
   return (
     <div
@@ -75,19 +38,15 @@ export const AppPageButton: FC = () => {
         margin: "4px 0",
       }}
     >
-      <ButtonItem
-        layout="below"
-        disabled={status === "downloading" || status === "installed"}
-        onClick={handleClick}
+      <div
+        style={{
+          color: "#8bca68",
+          fontSize: "13px",
+          textAlign: "center",
+        }}
       >
-        <span
-          style={{
-            color: isError ? "#ff6b6b" : isSuccess ? "#8bca68" : "#1a9fff",
-          }}
-        >
-          {label}
-        </span>
-      </ButtonItem>
+        {t("addedViaDeckTools")}
+      </div>
     </div>
   );
 };

@@ -34,7 +34,7 @@ try:
     logger = decky.logger
 except ImportError:
     import logging
-    logger = logging.getLogger("quickaccela")
+    logger = logging.getLogger("decktools")
 
 DOWNLOAD_STATE: Dict[int, Dict[str, Any]] = {}
 DOWNLOAD_TASKS: Dict[int, asyncio.Task] = {}
@@ -227,7 +227,7 @@ def _append_loaded_app(appid: int, name: str) -> None:
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("\n".join(lines) + "\n")
     except Exception as exc:
-        logger.warning(f"QuickAccela: _append_loaded_app failed for {appid}: {exc}")
+        logger.warning(f"DeckTools: _append_loaded_app failed for {appid}: {exc}")
 
 
 def _remove_loaded_app(appid: int) -> None:
@@ -272,7 +272,7 @@ async def init_applist() -> None:
                 with open(file_path, "w", encoding="utf-8") as handle:
                     json.dump(data, handle)
         except Exception as exc:
-            logger.warning(f"QuickAccela: Failed to download applist: {exc}")
+            logger.warning(f"DeckTools: Failed to download applist: {exc}")
     _load_applist_into_memory()
 
 
@@ -289,7 +289,7 @@ async def init_games_db() -> None:
         GAMES_DB_DATA = data
         GAMES_DB_LOADED = True
     except Exception as exc:
-        logger.warning(f"QuickAccela: Failed to download Games DB: {exc}")
+        logger.warning(f"DeckTools: Failed to download Games DB: {exc}")
         if os.path.exists(file_path):
             try:
                 with open(file_path, "r", encoding="utf-8") as handle:
@@ -326,7 +326,7 @@ def _process_and_install_lua(appid: int, zip_path: str) -> None:
     # ACCELA/Bifrost launcher integration (skip AppImage - it's a GUI app)
     launcher_bin = _load_launcher_path()
     if os.path.exists(launcher_bin) and not launcher_bin.endswith(".AppImage"):
-        logger.info(f"QuickAccela: Sending {zip_path} to launcher at {launcher_bin}")
+        logger.info(f"DeckTools: Sending {zip_path} to launcher at {launcher_bin}")
         try:
             if not os.access(launcher_bin, os.X_OK):
                 os.chmod(launcher_bin, 0o755)
@@ -349,12 +349,12 @@ def _process_and_install_lua(appid: int, zip_path: str) -> None:
             if stderr:
                 logger.warning(f"Launcher stderr: {stderr[:200]}")
         except Exception as e:
-            logger.error(f"QuickAccela: Failed to run launcher: {e}")
+            logger.error(f"DeckTools: Failed to run launcher: {e}")
 
     # Extract manifests and lua from zip
     with zipfile.ZipFile(zip_path, "r") as archive:
         names = archive.namelist()
-        logger.info(f"QuickAccela: Zip contains {len(names)} entries: {names}")
+        logger.info(f"DeckTools: Zip contains {len(names)} entries: {names}")
 
         # Extract .manifest files to depotcache
         depotcache_dir = os.path.join(base_path or "", "depotcache")
@@ -368,7 +368,7 @@ def _process_and_install_lua(appid: int, zip_path: str) -> None:
                 out_path = os.path.join(depotcache_dir, pure)
                 with open(out_path, "wb") as mf:
                     mf.write(data)
-                logger.info(f"QuickAccela: Extracted manifest -> {out_path}")
+                logger.info(f"DeckTools: Extracted manifest -> {out_path}")
 
         # Find and process .lua file
         candidates = [n for n in names if re.fullmatch(r"\d+\.lua", _zip_basename(n))]
@@ -399,7 +399,7 @@ def _process_and_install_lua(appid: int, zip_path: str) -> None:
             raise RuntimeError("cancelled")
         with open(dest_file, "w", encoding="utf-8") as output:
             output.write(text)
-        logger.info(f"QuickAccela: Installed lua -> {dest_file}")
+        logger.info(f"DeckTools: Installed lua -> {dest_file}")
         _set_download_state(appid, {"installedPath": dest_file})
 
     try:
@@ -445,10 +445,10 @@ async def _fetch_installdir_from_api(appid: int) -> str:
             if app_data.get("success"):
                 install_dir = app_data.get("data", {}).get("install_dir")
                 if install_dir:
-                    logger.info(f"QuickAccela: installdir from Steam API: {install_dir}")
+                    logger.info(f"DeckTools: installdir from Steam API: {install_dir}")
                     return install_dir
     except Exception as e:
-        logger.debug(f"QuickAccela: Failed to fetch installdir from API: {e}")
+        logger.debug(f"DeckTools: Failed to fetch installdir from API: {e}")
     return ""
 
 
@@ -466,7 +466,7 @@ async def _determine_install_dir(appid: int, game_name: str) -> str:
     api_installdir = await _fetch_installdir_from_api(appid)
     if api_installdir:
         full_path = os.path.join(common_path, api_installdir)
-        logger.info(f"QuickAccela: Install dir from Steam API: {full_path}")
+        logger.info(f"DeckTools: Install dir from Steam API: {full_path}")
         return full_path
 
     # 2. Check if a directory already exists on disk matching the game
@@ -482,10 +482,10 @@ async def _determine_install_dir(appid: int, game_name: str) -> str:
                     acf_dir = m.group(1)
                     full_path = os.path.join(common_path, acf_dir)
                     if os.path.isdir(full_path):
-                        logger.info(f"QuickAccela: Install dir from ACF (verified on disk): {full_path}")
+                        logger.info(f"DeckTools: Install dir from ACF (verified on disk): {full_path}")
                         return full_path
                     # ACF dir doesn't exist — scan for similar directories
-                    logger.info(f"QuickAccela: ACF installdir '{acf_dir}' not found on disk, scanning...")
+                    logger.info(f"DeckTools: ACF installdir '{acf_dir}' not found on disk, scanning...")
             except Exception:
                 pass
 
@@ -495,7 +495,7 @@ async def _determine_install_dir(appid: int, game_name: str) -> str:
             if d.lower().startswith(game_lower[:20]) or game_lower.startswith(d.lower()[:20]):
                 candidate = os.path.join(common_path, d)
                 if os.path.isdir(candidate):
-                    logger.info(f"QuickAccela: Install dir matched on disk: {candidate}")
+                    logger.info(f"DeckTools: Install dir matched on disk: {candidate}")
                     return candidate
 
     # 3. Fallback: use game name as directory name
@@ -503,7 +503,7 @@ async def _determine_install_dir(appid: int, game_name: str) -> str:
     if not safe_name:
         safe_name = f"app_{appid}"
     full_path = os.path.join(common_path, safe_name)
-    logger.info(f"QuickAccela: Install dir from game name: {full_path}")
+    logger.info(f"DeckTools: Install dir from game name: {full_path}")
     return full_path
 
 
@@ -513,13 +513,13 @@ async def _determine_install_dir(appid: int, game_name: str) -> str:
 
 # DepotDownloaderMod executable search paths (self-contained build)
 _DDM_EXE_SEARCH_PATHS = [
-    "/home/deck/.local/share/QuickAccela/deps/DepotDownloaderMod",
+    "/home/deck/.local/share/DeckTools/deps/DepotDownloaderMod",
     "/home/deck/.local/share/ACCELA/deps/DepotDownloaderMod",
 ]
 
 # DepotDownloaderMod DLL search paths (framework-dependent build)
 _DDM_DLL_SEARCH_PATHS = [
-    "/home/deck/.local/share/QuickAccela/deps/DepotDownloaderMod.dll",
+    "/home/deck/.local/share/DeckTools/deps/DepotDownloaderMod.dll",
     "/home/deck/.local/share/ACCELA/deps/DepotDownloaderMod.dll",
 ]
 
@@ -656,18 +656,18 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
     cmd_prefix, ddm_desc = _find_ddm_executable()
     if not cmd_prefix:
-        logger.error("QuickAccela: DepotDownloaderMod not found (no executable or dotnet+dll)")
+        logger.error("DeckTools: DepotDownloaderMod not found (no executable or dotnet+dll)")
         _set_download_state(appid, {
             "status": "failed",
             "error": "DepotDownloaderMod not found. Install ACCELA deps or set workshop tool path.",
         })
         return
 
-    logger.info(f"QuickAccela: Using DDM: {ddm_desc}")
+    logger.info(f"DeckTools: Using DDM: {ddm_desc}")
 
     os.makedirs(install_dir, exist_ok=True)
     total_depots = len(depots)
-    logger.info(f"QuickAccela: Starting depot download for {appid}: {total_depots} depot(s) -> {install_dir}")
+    logger.info(f"DeckTools: Starting depot download for {appid}: {total_depots} depot(s) -> {install_dir}")
 
     # Generate depot keys file (mistwalker_keys.vdf format: "depot_id;key\n")
     temp_dir = tempfile.gettempdir()
@@ -678,9 +678,9 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
                 token = depot_info.get("token", "")
                 if token:
                     kf.write(f"{depot_info['depot']};{token}\n")
-        logger.info(f"QuickAccela: Wrote depot keys to {keys_path}")
+        logger.info(f"DeckTools: Wrote depot keys to {keys_path}")
     except Exception as e:
-        logger.error(f"QuickAccela: Failed to write depot keys: {e}")
+        logger.error(f"DeckTools: Failed to write depot keys: {e}")
         _set_download_state(appid, {"status": "failed", "error": f"Failed to write depot keys: {e}"})
         return
 
@@ -728,7 +728,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
         # Add manifest file if it exists in depotcache
         if os.path.exists(manifest_file):
             cmd.extend(["-manifestfile", manifest_file])
-            logger.info(f"QuickAccela: Using manifest file: {manifest_file}")
+            logger.info(f"DeckTools: Using manifest file: {manifest_file}")
 
         # Add depot keys file if it has content
         try:
@@ -739,7 +739,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
         cmd.append("-validate")
 
-        logger.info(f"QuickAccela: DepotDownloader cmd: {' '.join(cmd)}")
+        logger.info(f"DeckTools: DepotDownloader cmd: {' '.join(cmd)}")
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -765,7 +765,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
                 if clean_line:
                     last_line = clean_line
                     output_log.append(clean_line.lower())
-                    logger.info(f"QuickAccela: DDM[{depot_id}]: {clean_line}")
+                    logger.info(f"DeckTools: DDM[{depot_id}]: {clean_line}")
                     m = percent_re.search(clean_line)
                     if m:
                         pct = float(m.group(1))
@@ -780,7 +780,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
             await process.wait()
             rc = process.returncode
-            logger.info(f"QuickAccela: DepotDownloader depot {depot_id} exit code: {rc}, last output: {last_line}")
+            logger.info(f"DeckTools: DepotDownloader depot {depot_id} exit code: {rc}, last output: {last_line}")
 
             # Check for auth/access errors in output
             full_log = "\n".join(output_log)
@@ -790,7 +790,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
                 error_msg = last_line if last_line else f"exit code {rc}"
                 if auth_error:
                     error_msg = f"Access denied for depot {depot_id} (auth required)"
-                logger.warning(f"QuickAccela: DepotDownloader failed for depot {depot_id}: {error_msg}")
+                logger.warning(f"DeckTools: DepotDownloader failed for depot {depot_id}: {error_msg}")
                 _set_download_state(appid, {
                     "status": "failed",
                     "error": f"Depot {depot_id} failed: {error_msg}",
@@ -798,7 +798,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
                 return
 
         except Exception as e:
-            logger.error(f"QuickAccela: DepotDownloader error for depot {depot_id}: {e}")
+            logger.error(f"DeckTools: DepotDownloader error for depot {depot_id}: {e}")
             _set_download_state(appid, {
                 "status": "failed",
                 "error": f"Depot {depot_id} error: {e}",
@@ -812,7 +812,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
     except Exception:
         pass
 
-    logger.info(f"QuickAccela: All depots downloaded for {appid} -> {install_dir}")
+    logger.info(f"DeckTools: All depots downloaded for {appid} -> {install_dir}")
 
     # Fix file ownership: Decky runs as root but Steam runs as deck user
     try:
@@ -821,9 +821,9 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
             ["chown", "-R", "deck:deck", install_dir],
             timeout=120, capture_output=True,
         )
-        logger.info(f"QuickAccela: Fixed ownership of {install_dir} to deck:deck")
+        logger.info(f"DeckTools: Fixed ownership of {install_dir} to deck:deck")
     except Exception as chown_exc:
-        logger.warning(f"QuickAccela: chown failed for {install_dir}: {chown_exc}")
+        logger.warning(f"DeckTools: chown failed for {install_dir}: {chown_exc}")
 
 
 async def _restart_steam_delayed(delay: int = 5) -> None:
@@ -831,14 +831,14 @@ async def _restart_steam_delayed(delay: int = 5) -> None:
     await asyncio.sleep(delay)
     try:
         import subprocess
-        logger.info("QuickAccela: Restarting Steam...")
+        logger.info("DeckTools: Restarting Steam...")
         subprocess.Popen(
             ["steam", "-shutdown"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
     except Exception as e:
-        logger.warning(f"QuickAccela: Failed to restart Steam: {e}")
+        logger.warning(f"DeckTools: Failed to restart Steam: {e}")
 
 
 def _get_dir_size(path: str) -> int:
@@ -888,7 +888,7 @@ def _chmod_linux_binaries(install_dir: str) -> None:
             except Exception:
                 pass
     if chmod_count > 0:
-        logger.info(f"QuickAccela: Set executable permissions on {chmod_count} files in {install_dir}")
+        logger.info(f"DeckTools: Set executable permissions on {chmod_count} files in {install_dir}")
 
 
 def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dict], game_name: str = "") -> None:
@@ -983,12 +983,12 @@ def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dic
         except Exception:
             pass
         logger.info(
-            f"QuickAccela: Created appmanifest {acf_path}: "
+            f"DeckTools: Created appmanifest {acf_path}: "
             f"installdir={install_folder_name}, StateFlags=4, "
             f"SizeOnDisk={size_on_disk}, platform={'windows_override' if has_exe and not has_linux_binary else 'native'}"
         )
     except Exception as e:
-        logger.error(f"QuickAccela: Failed to write appmanifest: {e}")
+        logger.error(f"DeckTools: Failed to write appmanifest: {e}")
 
     # Set executable permissions for Linux binaries (like ACCELA's _set_linux_binary_permissions)
     _chmod_linux_binaries(install_dir)
@@ -1013,7 +1013,7 @@ async def repair_appmanifest(appid: int) -> dict:
         candidate = os.path.join(common_path, api_installdir)
         if os.path.isdir(candidate):
             install_dir = candidate
-            logger.info(f"QuickAccela: repair - found dir via API: {install_dir}")
+            logger.info(f"DeckTools: repair - found dir via API: {install_dir}")
 
     # Try reading existing ACF for installdir and name
     acf_path = os.path.join(steam_path, "steamapps", f"appmanifest_{appid}.acf")
@@ -1104,7 +1104,7 @@ async def _download_zip_for_app(appid: int) -> None:
             "status": "checking", "currentApi": name,
             "bytesRead": 0, "totalBytes": 0,
         })
-        logger.info(f"QuickAccela: Trying API '{name}' -> {url}")
+        logger.info(f"DeckTools: Trying API '{name}' -> {url}")
 
         try:
             headers = {"User-Agent": USER_AGENT}
@@ -1122,19 +1122,19 @@ async def _download_zip_for_app(appid: int) -> None:
                     headers["Sec-Fetch-Mode"] = "navigate"
                     headers["Sec-Fetch-Site"] = "same-origin"
                 else:
-                    logger.warning("QuickAccela: Ryuu API detected but ryuu_cookie.txt not found or empty!")
+                    logger.warning("DeckTools: Ryuu API detected but ryuu_cookie.txt not found or empty!")
 
             if _is_download_cancelled(appid):
                 return
 
             async with client.stream("GET", url, headers=headers, follow_redirects=True, timeout=30) as resp:
                 code = resp.status_code
-                logger.info(f"QuickAccela: API '{name}' status={code}")
+                logger.info(f"DeckTools: API '{name}' status={code}")
                 if code == unavailable_code:
                     continue
                 if code != success_code:
                     if "ryuu.lol" in url and code in (401, 403):
-                        logger.warning(f"QuickAccela: Ryuu access denied ({code}). Check if cookie expired.")
+                        logger.warning(f"DeckTools: Ryuu access denied ({code}). Check if cookie expired.")
                     continue
 
                 total = int(resp.headers.get("Content-Length", "0") or "0")
@@ -1165,10 +1165,10 @@ async def _download_zip_for_app(appid: int) -> None:
                                 preview = check_f.read(512)
                                 content_preview = preview[:100].decode("utf-8", errors="ignore")
                             logger.warning(
-                                f"QuickAccela: API '{name}' returned non-zip (magic={magic.hex()}, size={file_size}, preview={content_preview[:50]})"
+                                f"DeckTools: API '{name}' returned non-zip (magic={magic.hex()}, size={file_size}, preview={content_preview[:50]})"
                             )
                             if "Login required" in content_preview or "Sign in" in content_preview:
-                                logger.error("QuickAccela: Ryuu site asked for login. Cookie is invalid or expired.")
+                                logger.error("DeckTools: Ryuu site asked for login. Cookie is invalid or expired.")
                             try:
                                 os.remove(dest_path)
                             except Exception:
@@ -1200,13 +1200,13 @@ async def _download_zip_for_app(appid: int) -> None:
                     try:
                         from slssteam_ops import add_game_token, add_game_dlcs, add_to_additional_apps
                         r0 = add_to_additional_apps(appid)
-                        logger.info(f"QuickAccela: SLSsteam add_to_additional_apps({appid}): {r0}")
+                        logger.info(f"DeckTools: SLSsteam add_to_additional_apps({appid}): {r0}")
                         r2 = add_game_token(appid)
-                        logger.info(f"QuickAccela: SLSsteam add_game_token({appid}): {r2}")
+                        logger.info(f"DeckTools: SLSsteam add_game_token({appid}): {r2}")
                         r3 = await add_game_dlcs(appid)
-                        logger.info(f"QuickAccela: SLSsteam add_game_dlcs({appid}): {r3}")
+                        logger.info(f"DeckTools: SLSsteam add_game_dlcs({appid}): {r3}")
                     except Exception as sls_exc:
-                        logger.warning(f"QuickAccela: SLSsteam config partial: {sls_exc}")
+                        logger.warning(f"DeckTools: SLSsteam config partial: {sls_exc}")
 
                     # Download actual game files via DepotDownloader
                     if _is_download_cancelled(appid):
@@ -1222,7 +1222,7 @@ async def _download_zip_for_app(appid: int) -> None:
                         depots = _parse_lua_depots(lua_path) if os.path.exists(lua_path) else []
                         if depots:
                             install_dir = await _determine_install_dir(appid, fetched_name)
-                            logger.info(f"QuickAccela: Starting depot download - {len(depots)} depot(s) -> {install_dir}")
+                            logger.info(f"DeckTools: Starting depot download - {len(depots)} depot(s) -> {install_dir}")
                             await _run_depot_download(appid, depots, install_dir)
 
                             if _is_download_cancelled(appid):
@@ -1237,13 +1237,13 @@ async def _download_zip_for_app(appid: int) -> None:
                             try:
                                 _create_or_update_appmanifest(appid, install_dir, depots, fetched_name)
                             except Exception as acf_exc:
-                                logger.warning(f"QuickAccela: appmanifest update error: {acf_exc}")
+                                logger.warning(f"DeckTools: appmanifest update error: {acf_exc}")
                         else:
-                            logger.info(f"QuickAccela: No depots found in lua for {appid}, skipping game file download")
+                            logger.info(f"DeckTools: No depots found in lua for {appid}, skipping game file download")
                     except RuntimeError:
                         raise
                     except Exception as depot_exc:
-                        logger.warning(f"QuickAccela: Depot download error: {depot_exc}")
+                        logger.warning(f"DeckTools: Depot download error: {depot_exc}")
                         _set_download_state(appid, {"status": "failed", "error": f"Game download failed: {depot_exc}"})
                         return
 
@@ -1252,7 +1252,7 @@ async def _download_zip_for_app(appid: int) -> None:
                         from api_manifest import save_depot_snapshot
                         await save_depot_snapshot(appid)
                     except Exception as snap_exc:
-                        logger.warning(f"QuickAccela: depot snapshot save error: {snap_exc}")
+                        logger.warning(f"DeckTools: depot snapshot save error: {snap_exc}")
 
                     # Restart Steam so it reads the fresh ACF (like ACCELA)
                     asyncio.ensure_future(_restart_steam_delayed(5))
@@ -1267,7 +1267,7 @@ async def _download_zip_for_app(appid: int) -> None:
                         except Exception:
                             pass
                         return
-                    logger.warning(f"QuickAccela: Processing failed -> {install_exc}")
+                    logger.warning(f"DeckTools: Processing failed -> {install_exc}")
                     _set_download_state(appid, {"status": "failed", "error": f"Processing failed: {install_exc}"})
                     try:
                         os.remove(dest_path)
@@ -1286,7 +1286,7 @@ async def _download_zip_for_app(appid: int) -> None:
             _set_download_state(appid, {"status": "failed", "error": str(cancel_exc)})
             return
         except Exception as err:
-            logger.warning(f"QuickAccela: API '{name}' failed: {err}")
+            logger.warning(f"DeckTools: API '{name}' failed: {err}")
             continue
 
     _set_download_state(appid, {"status": "failed", "error": "Not available on any API"})
@@ -1298,7 +1298,7 @@ async def start_download(appid: int) -> dict:
     except Exception:
         return {"success": False, "error": "Invalid appid"}
 
-    logger.info(f"QuickAccela: start_download appid={appid}")
+    logger.info(f"DeckTools: start_download appid={appid}")
     _set_download_state(appid, {"status": "queued", "bytesRead": 0, "totalBytes": 0})
     task = asyncio.create_task(_download_zip_for_app(appid))
     DOWNLOAD_TASKS[appid] = task
@@ -1368,7 +1368,7 @@ def delete_luatools_for_app(appid: int) -> dict:
                 os.remove(path)
                 deleted.append(path)
         except Exception as exc:
-            logger.warning(f"QuickAccela: Failed to delete {path}: {exc}")
+            logger.warning(f"DeckTools: Failed to delete {path}: {exc}")
     try:
         name = _get_loaded_app_name(appid) or f"Unknown ({appid})"
         _remove_loaded_app(appid)

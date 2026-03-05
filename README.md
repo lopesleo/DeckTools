@@ -8,6 +8,7 @@ Decky Loader plugin for Steam Deck that helps manage game libraries and configur
 - **SLSsteam configuration** manager (FakeAppId, Token, DLC entries)
 - **Depot management** via DepotDownloaderMod
 - **Steam emulator profiles** (Goldberg integration)
+- **Achievement generation** via SLScheevo (per-game and batch sync)
 - **Community fixes** — apply game-specific patches
 - **Workshop content** downloads
 - **Auto-detect AppID** from Steam Store or library pages
@@ -58,15 +59,16 @@ Copy `plugin.json`, `main.py`, `package.json`, `dist/`, and `backend/` to the De
 
 ### Game Options
 
-| Option | Description |
-|--------|-------------|
-| **FakeAppId** | Set an alternative AppID for compatibility |
-| **Token** | Manage authentication tokens in SLSsteam config |
-| **DLCs** | Manage DLC entries for a game |
-| **Goldberg** | Toggle Goldberg Steam emulator profile |
-| **Fixes** | Apply community game patches |
-| **Linux Native Fix** | Set executable permissions on game files |
-| **Repair ACF** | Regenerate appmanifest |
+| Option               | Description                                     |
+| -------------------- | ----------------------------------------------- |
+| **FakeAppId**        | Set an alternative AppID for compatibility      |
+| **Token**            | Manage authentication tokens in SLSsteam config |
+| **DLCs**             | Manage DLC entries for a game                   |
+| **Goldberg**         | Toggle Goldberg Steam emulator profile          |
+| **Achievements**     | Generate achievement files via SLScheevo        |
+| **Fixes**            | Apply community game patches                    |
+| **Linux Native Fix** | Set executable permissions on game files        |
+| **Repair ACF**       | Regenerate appmanifest                          |
 
 ### Settings
 
@@ -85,6 +87,22 @@ pnpm run watch    # Watch mode
 ```
 
 Backend: Python (async) in `backend/`. Frontend: TypeScript + React in `src/`.
+
+## Credits & Acknowledgments
+
+DeckTools builds upon and integrates with several community projects:
+
+| Project                                                                    | Author            | Role                                                                                           |
+| -------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------- |
+| [LuaToolsLinux](https://github.com/Star123451/LuaToolsLinux)               | Star123451        | Original project that inspired DeckTools. Core manifest handling and API logic derived from it |
+| [SLSsteam](https://github.com/nichelimux/SLSsteam)                         | nichelimux        | Steam emulator — DeckTools manages its configuration, tokens, FakeAppIds, and DLCs             |
+| [SLScheevo](https://github.com/xamionex/SLScheevo)                         | xamionex          | Achievement file generator for SLSsteam-managed games                                          |
+| [ACCELA](https://github.com/nichelimux/ACCELA)                             | nichelimux        | Dependency installer and package manager (Goldberg, DepotDownloader, .NET)                     |
+| [Goldberg Steam Emulator](https://gitlab.com/nichelimux/goldberg_emulator) | nichelimux        | Steam API emulator DLLs, bundled through ACCELA                                                |
+| [enter-the-wired](https://github.com/Star123451/enter-the-wired)           | Star123451        | Automated dependency installation script                                                       |
+| [DepotDownloader](https://github.com/SteamRE/DepotDownloader)              | SteamRE           | Steam depot content downloader                                                                 |
+| [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader)          | SteamDeckHomebrew | Plugin platform for Steam Deck Game Mode                                                       |
+| [Morrenus](https://manifest.morrenus.xyz)                                  | Morrenus          | Manifest API and game search service                                                           |
 
 ## Disclaimer
 

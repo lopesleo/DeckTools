@@ -1,4 +1,4 @@
-"""Central configuration constants for the QuickAccela backend."""
+"""Central configuration constants for the DeckTools backend."""
 
 DEFAULT_HEADERS = {
     "Accept": "application/json",
@@ -17,7 +17,7 @@ API_JSON_FILE = "api.json"
 HTTP_TIMEOUT_SECONDS = 15
 HTTP_PROXY_TIMEOUT_SECONDS = 15
 
-USER_AGENT = "quickaccela-v1-decky"
+USER_AGENT = "decktools-v1-decky"
 
 LOADED_APPS_FILE = "loadedappids.txt"
 APPID_LOG_FILE = "appidlogs.txt"

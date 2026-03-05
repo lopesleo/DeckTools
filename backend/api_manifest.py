@@ -1,4 +1,4 @@
-"""Management of the QuickAccela API manifest (free API list)."""
+"""Management of the DeckTools API manifest (free API list)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ try:
     logger = decky.logger
 except ImportError:
     import logging
-    logger = logging.getLogger("quickaccela")
+    logger = logging.getLogger("decktools")
 
 _APIS_INIT_DONE = False
 _INIT_APIS_LAST_MESSAGE = ""
@@ -137,7 +137,7 @@ def load_api_manifest() -> List[Dict[str, Any]]:
         apis = data.get("api_list", [])
         return [api for api in apis if api.get("enabled", False)]
     except Exception as exc:
-        logger.error(f"QuickAccela: Failed to parse api.json: {exc}")
+        logger.error(f"DeckTools: Failed to parse api.json: {exc}")
         return []
 
 

@@ -14,9 +14,14 @@ import {
   startDownload,
   detectStoreAppid,
   searchMorrenus,
+  checkSlscheevoInstalled,
+  checkAllAchievementsStatus,
+  generateAllAchievements,
+  getSyncAllStatus,
 } from "../api";
 import { ROUTE_GAME_DETAIL, ROUTE_SETTINGS, ROUTE_DOWNLOADS } from "../routes";
 import { useT } from "../i18n";
+import { toaster } from "@decky/api";
 
 interface SearchResult {
   appid: number;
@@ -40,6 +45,9 @@ export function GameList() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const [slscheevoReady, setSlscheevoReady] = useState(false);
+  const [syncState, setSyncState] = useState<any>(null);
+  const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadGames = useCallback(async () => {
     try {
@@ -56,6 +64,19 @@ export function GameList() {
             hasGameFiles: s.hasGameFiles,
           });
         }
+      }
+
+      // Check achievement status for all games
+      const appids = gameList.map((g) => g.appid);
+      if (appids.length > 0) {
+        try {
+          const achResult = await checkAllAchievementsStatus(appids);
+          if (achResult.success && achResult.map) {
+            for (const g of gameList) {
+              g.hasAchievements = !!achResult.map[g.appid];
+            }
+          }
+        } catch {}
       }
 
       gameList.sort((a, b) => a.name.localeCompare(b.name));
@@ -149,11 +170,22 @@ export function GameList() {
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      if (syncPollRef.current) clearInterval(syncPollRef.current);
     };
   }, []);
 
   useEffect(() => {
     loadGames();
+
+    // Check SLScheevo availability
+    (async () => {
+      try {
+        const result = await checkSlscheevoInstalled();
+        if (result.success && result.installed && result.loginReady) {
+          setSlscheevoReady(true);
+        }
+      } catch {}
+    })();
 
     const detectAppId = async () => {
       try {
@@ -249,6 +281,38 @@ export function GameList() {
     setSearchResults([]);
     setSearchQuery("");
     setAddStatus(`${t("selected")}: ${result.name} (${result.appid})`);
+  };
+
+  const toast = (title: string, body?: string, duration = 3000) =>
+    toaster.toast({ title, body: body || "", duration });
+
+  const handleSyncAllAchievements = async () => {
+    const appids = games.filter((g) => g.hasLua && g.hasGameFiles).map((g) => g.appid);
+    if (appids.length === 0) return;
+
+    const result = await generateAllAchievements(appids);
+    if (!result.success) {
+      toast(t("toastSyncFailed"), result.error || "");
+      return;
+    }
+
+    setSyncState({ status: "running", done: 0, total: appids.length });
+
+    syncPollRef.current = setInterval(async () => {
+      try {
+        const status = await getSyncAllStatus();
+        if (status.success && status.state) {
+          setSyncState(status.state);
+          if (status.state.status === "done") {
+            if (syncPollRef.current) clearInterval(syncPollRef.current);
+            syncPollRef.current = null;
+            toast(t("toastSyncComplete"));
+            loadGames();
+            setTimeout(() => setSyncState(null), 3000);
+          }
+        }
+      } catch {}
+    }, 2000);
   };
 
   const sortLabels: Record<string, string> = {
@@ -461,6 +525,21 @@ export function GameList() {
             {t("refresh")}
           </ButtonItem>
         </PanelSectionRow>
+        {slscheevoReady && (
+          <>
+            <PanelSectionRow>
+              <ButtonItem
+                layout="below"
+                onClick={handleSyncAllAchievements}
+                disabled={syncState?.status === "running"}
+              >
+                {syncState?.status === "running"
+                  ? t("syncingAchievements", syncState.done || 0, syncState.total || 0)
+                  : t("syncAllAchievements")}
+              </ButtonItem>
+            </PanelSectionRow>
+          </>
+        )}
       </PanelSection>
     </>
   );

@@ -18,7 +18,7 @@ try:
     logger = decky.logger
 except ImportError:
     import logging
-    logger = logging.getLogger("quickaccela")
+    logger = logging.getLogger("decktools")
 
 
 def _config_path() -> str:
@@ -553,7 +553,7 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
             shutil.rmtree(install_path, ignore_errors=True)
             if not os.path.exists(install_path):
                 removed.append("game_files")
-                logger.info(f"QuickAccela: Removed game directory: {install_path}")
+                logger.info(f"DeckTools: Removed game directory: {install_path}")
             else:
                 errors.append("Failed to fully remove game directory")
 
@@ -566,7 +566,7 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
                 except Exception as e:
                     errors.append(f"Failed to remove appmanifest: {e}")
         else:
-            logger.info(f"QuickAccela: No game directory found for {appid}, skipping file removal")
+            logger.info(f"DeckTools: No game directory found for {appid}, skipping file removal")
 
         # 1b. Remove compatdata/proton prefix if requested
         if remove_compatdata:
@@ -579,7 +579,7 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
                         shutil.rmtree(compatdata_path, ignore_errors=True)
                         if not os.path.exists(compatdata_path):
                             removed.append("compatdata")
-                            logger.info(f"QuickAccela: Removed compatdata: {compatdata_path}")
+                            logger.info(f"DeckTools: Removed compatdata: {compatdata_path}")
                         else:
                             errors.append("Failed to fully remove compatdata")
                     # Also check other library paths
@@ -591,7 +591,7 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
                                 if "compatdata" not in removed:
                                     removed.append("compatdata")
             except Exception as e:
-                logger.warning(f"QuickAccela: Compatdata cleanup error: {e}")
+                logger.warning(f"DeckTools: Compatdata cleanup error: {e}")
 
         # 2. Remove depotcache manifests for this game's depots
         try:
@@ -610,13 +610,13 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
                         if os.path.exists(manifest_file):
                             try:
                                 os.remove(manifest_file)
-                                logger.info(f"QuickAccela: Removed manifest: {manifest_file}")
+                                logger.info(f"DeckTools: Removed manifest: {manifest_file}")
                             except Exception:
                                 pass
                     if depots:
                         removed.append("depot_manifests")
         except Exception as e:
-            logger.warning(f"QuickAccela: Depotcache cleanup error: {e}")
+            logger.warning(f"DeckTools: Depotcache cleanup error: {e}")
 
         # 3. Remove lua script
         try:
@@ -647,7 +647,7 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
         except Exception:
             pass
 
-        logger.info(f"QuickAccela: Uninstall {appid} complete. Removed: {removed}")
+        logger.info(f"DeckTools: Uninstall {appid} complete. Removed: {removed}")
         return {"success": True, "removed": removed, "errors": errors}
     except Exception as e:
         return {"success": False, "error": str(e)}

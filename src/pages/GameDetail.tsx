@@ -41,6 +41,11 @@ import {
   checkGoldbergStatus,
   applyGoldberg,
   removeGoldberg,
+  checkAchievementsStatus,
+  generateAchievements,
+  getGenerateStatus,
+  downloadSlscheevo,
+  getSlscheevoDownloadStatus,
 } from "../api";
 import { useT } from "../i18n";
 
@@ -88,6 +93,9 @@ export function GameDetail({ appid }: GameDetailProps) {
   const [removeCompatdata, setRemoveCompatdata] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
   const [goldbergApplied, setGoldbergApplied] = useState(false);
+  const [achievementStatus, setAchievementStatus] = useState("");
+  const [achievementGenState, setAchievementGenState] = useState<any>(null);
+  const [slscheevoBinaryPath, setSlscheevoBinaryPath] = useState("");
   const [busy, setBusy] = useState("");
 
   const toast = (title: string, body?: string, duration = 3000) =>
@@ -150,6 +158,12 @@ export function GameDetail({ appid }: GameDetailProps) {
       }
 
       await loadInstalledFixes();
+
+      const achResult = await checkAchievementsStatus(appid);
+      if (achResult.success) {
+        setAchievementStatus(achResult.status);
+        if (achResult.binaryPath) setSlscheevoBinaryPath(achResult.binaryPath);
+      }
     };
     load();
   }, [appid]);
@@ -199,6 +213,25 @@ export function GameDetail({ appid }: GameDetailProps) {
     }, 1000);
     return () => clearInterval(interval);
   }, [fixStatus, appid]);
+
+  // Poll achievement generation status
+  useEffect(() => {
+    if (achievementStatus !== "generating") return;
+    const interval = setInterval(async () => {
+      const status = await getGenerateStatus(appid);
+      if (status.success && status.state) {
+        setAchievementGenState(status.state);
+        if (status.state.status === "done") {
+          setAchievementStatus("generated");
+          toast(t("toastAchievementsGenerated"), gameName);
+        } else if (status.state.status === "error") {
+          setAchievementStatus("ready");
+          toast(t("toastAchievementsFailed"), status.state.error || gameName, 5000);
+        }
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [achievementStatus, appid]);
 
   const handleDownload = async () => {
     const result = await startDownload(appid);
@@ -406,6 +439,49 @@ export function GameDetail({ appid }: GameDetailProps) {
       } else {
         toast(t("toastError"), result.message || result.error || "", 4000);
       }
+    }
+  };
+
+  const handleGenerateAchievements = async () => {
+    const result = await generateAchievements(appid);
+    if (result.success) {
+      setAchievementStatus("generating");
+      setAchievementGenState({ status: "running", progress: "Starting..." });
+    } else {
+      toast(t("toastError"), result.error || t("toastAchievementsFailed"), 4000);
+    }
+  };
+
+  const handleDownloadSlscheevo = async () => {
+    setBusy("slscheevo");
+    const result = await downloadSlscheevo();
+    if (result.success) {
+      const poll = setInterval(async () => {
+        const status = await getSlscheevoDownloadStatus();
+        if (status.success && status.state) {
+          if (status.state.status === "done") {
+            clearInterval(poll);
+            setBusy("");
+            // Refresh status to get binaryPath
+            const achResult = await checkAchievementsStatus(appid);
+            if (achResult.success) {
+              setAchievementStatus(achResult.status);
+              if (achResult.binaryPath) setSlscheevoBinaryPath(achResult.binaryPath);
+            } else {
+              setAchievementStatus("not_configured");
+            }
+            toast(t("toastSlscheevoInstalled"), gameName);
+          } else if (status.state.status === "error") {
+            clearInterval(poll);
+            setBusy("");
+            toast(t("toastSlscheevoDownloadFailed"), status.state.error || "", 5000);
+          }
+        }
+      }, 1000);
+      setTimeout(() => { clearInterval(poll); setBusy(""); }, 120000);
+    } else {
+      setBusy("");
+      toast(t("toastError"), result.error || "", 4000);
     }
   };
 
@@ -649,6 +725,86 @@ export function GameDetail({ appid }: GameDetailProps) {
             }
           />
         )}
+      </PanelSection>
+
+      {/* Achievements */}
+      <PanelSection title={t("achievements")}>
+        {achievementStatus === "not_installed" ? (
+          <>
+            <PanelSectionRow>
+              <div style={{ fontSize: "12px", color: "#8b929a" }}>
+                {t("achievementStatusNotInstalled")}
+              </div>
+            </PanelSectionRow>
+            <ActionButton
+              label={busy === "slscheevo" ? t("downloadingSlscheevo") : t("downloadSlscheevo")}
+              onClick={handleDownloadSlscheevo}
+              disabled={busy === "slscheevo"}
+            />
+          </>
+        ) : achievementStatus === "not_configured" ? (
+          <>
+            <PanelSectionRow>
+              <div style={{ fontSize: "12px", color: "#ffaa00" }}>
+                {t("achievementStatusNotConfigured")}
+              </div>
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <div style={{ fontSize: "11px", color: "#8b929a" }}>
+                {t("slscheevoRunInTerminal")}
+              </div>
+            </PanelSectionRow>
+            {slscheevoBinaryPath && (
+              <PanelSectionRow>
+                <div style={{
+                  fontSize: "10px",
+                  color: "#b8bcbf",
+                  fontFamily: "monospace",
+                  background: "#1a1d23",
+                  padding: "6px 8px",
+                  borderRadius: "4px",
+                  wordBreak: "break-all",
+                }}>
+                  {t("slscheevoPath",
+                    slscheevoBinaryPath.substring(0, slscheevoBinaryPath.lastIndexOf("/")),
+                    slscheevoBinaryPath.substring(slscheevoBinaryPath.lastIndexOf("/") + 1),
+                  )}
+                </div>
+              </PanelSectionRow>
+            )}
+          </>
+        ) : achievementStatus === "generating" ? (
+          <PanelSectionRow>
+            <div style={{ fontSize: "12px", color: "#1a9fff" }}>
+              {achievementGenState?.progress || t("achievementStatusGenerating")}
+            </div>
+          </PanelSectionRow>
+        ) : achievementStatus === "generated" ? (
+          <>
+            <PanelSectionRow>
+              <div style={{ fontSize: "12px", color: "#00cc00" }}>
+                {t("achievementStatusGenerated")}
+              </div>
+            </PanelSectionRow>
+            <ActionButton
+              label={t("generateAchievements")}
+              onClick={handleGenerateAchievements}
+              description={t("achievementStatusGenerated")}
+            />
+          </>
+        ) : achievementStatus === "ready" ? (
+          <>
+            <PanelSectionRow>
+              <div style={{ fontSize: "12px", color: "#dcdedf" }}>
+                {t("achievementStatusReady")}
+              </div>
+            </PanelSectionRow>
+            <ActionButton
+              label={t("generateAchievements")}
+              onClick={handleGenerateAchievements}
+            />
+          </>
+        ) : null}
       </PanelSection>
 
       {/* Fixes */}

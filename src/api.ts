@@ -136,6 +136,34 @@ export const removeGoldberg = async (installPath: string, appid: number) =>
     await call<[string, number], string>("remove_goldberg", installPath, appid),
   );
 
+// Achievements (SLScheevo)
+export const checkSlscheevoInstalled = async () =>
+  parseResult(await call<[], string>("check_slscheevo_installed"));
+
+export const checkAchievementsStatus = async (appid: number) =>
+  parseResult(await call<[number], string>("check_achievements_status", appid));
+
+export const generateAchievements = async (appid: number) =>
+  parseResult(await call<[number], string>("generate_achievements", appid));
+
+export const getGenerateStatus = async (appid: number) =>
+  parseResult(await call<[number], string>("get_generate_status", appid));
+
+export const downloadSlscheevo = async () =>
+  parseResult(await call<[], string>("download_slscheevo"));
+
+export const getSlscheevoDownloadStatus = async () =>
+  parseResult(await call<[], string>("get_slscheevo_download_status"));
+
+export const checkAllAchievementsStatus = async (appids: number[]) =>
+  parseResult(await call<[number[]], string>("check_all_achievements_status", appids));
+
+export const generateAllAchievements = async (appids: number[]) =>
+  parseResult(await call<[number[]], string>("generate_all_achievements", appids));
+
+export const getSyncAllStatus = async () =>
+  parseResult(await call<[], string>("get_sync_all_status"));
+
 // Fixes
 export const checkForFixes = async (appid: number) =>
   parseResult(await call<[number], string>("check_for_fixes", appid));

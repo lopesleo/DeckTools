@@ -1,4 +1,4 @@
-"""Generic helpers for file and data handling in the QuickAccela backend."""
+"""Generic helpers for file and data handling in the DeckTools backend."""
 
 from __future__ import annotations
 

@@ -16,7 +16,7 @@ try:
     logger = decky.logger
 except ImportError:
     import logging
-    logger = logging.getLogger("quickaccela")
+    logger = logging.getLogger("decktools")
 
 # Workshop download state
 workshop_state = {

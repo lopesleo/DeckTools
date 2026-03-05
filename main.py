@@ -1,4 +1,4 @@
-"""QuickAccela — Decky Loader Plugin entry point.
+"""DeckTools — Decky Loader Plugin entry point.
 
 Exposes all backend functions as async methods callable from the frontend
 via serverAPI.callPluginMethod().
@@ -19,7 +19,7 @@ try:
     logger = decky.logger
 except ImportError:
     import logging
-    logger = logging.getLogger("quickaccela")
+    logger = logging.getLogger("decktools")
 
 
 def _j(obj) -> str:
@@ -40,23 +40,23 @@ class Plugin:
     # ==========================================================================
 
     async def _main(self):
-        logger.info("QuickAccela: Plugin loaded")
+        logger.info("DeckTools: Plugin loaded")
         try:
             from api_manifest import init_apis
             from downloads import init_applist, init_games_db
             from paths import get_platform_summary
 
             summary = get_platform_summary()
-            logger.info(f"QuickAccela: Platform summary: {json.dumps(summary)}")
+            logger.info(f"DeckTools: Platform summary: {json.dumps(summary)}")
 
             await init_apis()
             await init_applist()
             await init_games_db()
         except Exception as exc:
-            logger.error(f"QuickAccela: _main init error: {exc}")
+            logger.error(f"DeckTools: _main init error: {exc}")
 
     async def _unload(self):
-        logger.info("QuickAccela: Plugin unloading")
+        logger.info("DeckTools: Plugin unloading")
         try:
             from http_client import close_http_client
             from downloads import DOWNLOAD_TASKS
@@ -66,7 +66,7 @@ class Plugin:
                     task.cancel()
             await close_http_client("unload")
         except Exception as exc:
-            logger.error(f"QuickAccela: _unload error: {exc}")
+            logger.error(f"DeckTools: _unload error: {exc}")
 
     # ==========================================================================
     # Platform & Paths
@@ -126,14 +126,14 @@ class Plugin:
     # ==========================================================================
 
     async def start_download(self, appid: int) -> str:
-        logger.info(f"QuickAccela: start_download called, appid={appid}")
+        logger.info(f"DeckTools: start_download called, appid={appid}")
         try:
             from downloads import start_download
             result = await start_download(appid)
-            logger.info(f"QuickAccela: start_download result={result}")
+            logger.info(f"DeckTools: start_download result={result}")
             return _j(result)
         except Exception as exc:
-            logger.error(f"QuickAccela: start_download error: {exc}")
+            logger.error(f"DeckTools: start_download error: {exc}")
             return _j({"success": False, "error": str(exc)})
 
     async def get_download_status(self, appid: int) -> str:
@@ -283,6 +283,46 @@ class Plugin:
         return _j(remove_goldberg(install_path, appid))
 
     # ==========================================================================
+    # Achievements (SLScheevo)
+    # ==========================================================================
+
+    async def check_slscheevo_installed(self) -> str:
+        from achievements import check_slscheevo_installed
+        return _j(check_slscheevo_installed())
+
+    async def check_achievements_status(self, appid: int) -> str:
+        from achievements import check_achievements_status
+        return _j(check_achievements_status(appid))
+
+    async def generate_achievements(self, appid: int) -> str:
+        from achievements import generate_achievements
+        return _j(generate_achievements(appid))
+
+    async def get_generate_status(self, appid: int) -> str:
+        from achievements import get_generate_status
+        return _j(get_generate_status(appid))
+
+    async def download_slscheevo(self) -> str:
+        from achievements import download_slscheevo
+        return _j(download_slscheevo())
+
+    async def get_slscheevo_download_status(self) -> str:
+        from achievements import get_slscheevo_download_status
+        return _j(get_slscheevo_download_status())
+
+    async def check_all_achievements_status(self, appids: list) -> str:
+        from achievements import check_all_achievements_status
+        return _j(check_all_achievements_status(appids))
+
+    async def generate_all_achievements(self, appids: list) -> str:
+        from achievements import generate_all_achievements
+        return _j(generate_all_achievements(appids))
+
+    async def get_sync_all_status(self) -> str:
+        from achievements import get_sync_all_status
+        return _j(get_sync_all_status())
+
+    # ==========================================================================
     # Fixes
     # ==========================================================================
 
@@ -375,7 +415,7 @@ class Plugin:
                             return _j({"success": True, "appid": appid, "title": title, "source": source})
             return _j({"success": False, "error": "No store page found"})
         except Exception as exc:
-            logger.debug(f"QuickAccela: detect_store_appid error: {exc}")
+            logger.debug(f"DeckTools: detect_store_appid error: {exc}")
             return _j({"success": False, "error": str(exc)})
 
     # ==========================================================================

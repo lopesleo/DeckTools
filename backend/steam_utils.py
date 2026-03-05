@@ -1,4 +1,4 @@
-"""Steam-related utilities used across QuickAccela backend modules."""
+"""Steam-related utilities used across DeckTools backend modules."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ try:
     logger = decky.logger
 except ImportError:
     import logging
-    logger = logging.getLogger("quickaccela")
+    logger = logging.getLogger("decktools")
 
 _STEAM_INSTALL_PATH: Optional[str] = None
 
@@ -41,7 +41,7 @@ def detect_steam_install_path() -> str:
                 path = candidate
                 break
     _STEAM_INSTALL_PATH = path
-    logger.info(f"QuickAccela: Steam install path set to {_STEAM_INSTALL_PATH}")
+    logger.info(f"DeckTools: Steam install path set to {_STEAM_INSTALL_PATH}")
     return _STEAM_INSTALL_PATH or ""
 
 
@@ -93,7 +93,7 @@ def has_lua_for_app(appid: int) -> bool:
         disabled_file = os.path.join(stplug_path, f"{appid}.lua.disabled")
         return os.path.exists(lua_file) or os.path.exists(disabled_file)
     except Exception as exc:
-        logger.error(f"QuickAccela: Error checking Lua scripts for app {appid}: {exc}")
+        logger.error(f"DeckTools: Error checking Lua scripts for app {appid}: {exc}")
         return False
 
 

@@ -1,4 +1,4 @@
-# QuickAccela — Decky Loader Plugin
+# DeckTools — Decky Loader Plugin
 
 ## Overview
 
@@ -61,6 +61,7 @@ Frontend ↔ Backend via `serverAPI.callPluginMethod("function_name", {args})`.
 ### 1. Game Detection
 
 Scans:
+
 - `{steam_root}/steamapps/appmanifest_*.acf` — jogos reconhecidos pelo Steam (via SLSsteam)
 - `{steam_root}/depotcache/*.manifest` — manifests já baixados
 - `loadedappids.txt` do LuaToolsLinux — histórico
@@ -83,6 +84,7 @@ Fallback entre APIs. Dual-URL com proxy para resiliência.
 ### 3. Game Download
 
 **Modo CLI (padrão):**
+
 ```bash
 dotnet DepotDownloader.dll \
   -app {appid} -depot {depotid} -manifest {manifestid} \
@@ -91,6 +93,7 @@ dotnet DepotDownloader.dll \
 ```
 
 **Fallback ACCELA GUI:**
+
 ```bash
 ~/.local/share/ACCELA/run.sh [zip_path]
 ```
@@ -103,6 +106,7 @@ Frontend faz polling via `callPluginMethod("get_download_status", {appid})`.
 ## Features
 
 ### Core
+
 - Listagem de jogos "comprados" via SLSsteam
 - Busca automática de manifest (Morrenus + Ryuu APIs)
 - Download via DepotDownloaderMod CLI
@@ -110,6 +114,7 @@ Frontend faz polling via `callPluginMethod("get_download_status", {appid})`.
 - Fallback para ACCELA GUI
 
 ### Game Management
+
 - FakeAppId management (AppID 480 Spacewar)
 - Access token management (config.yaml do SLSsteam)
 - DLC management
@@ -119,6 +124,7 @@ Frontend faz polling via `callPluginMethod("get_download_status", {appid})`.
 - Game removal with manifest cleanup
 
 ### Configuration
+
 - Ryuu cookie storage (`data/ryuu_cookie.txt`)
 - Morrenus key in `api.json`
 - Reaproveitamento de configs LuaToolsLinux existentes
@@ -127,28 +133,31 @@ Frontend faz polling via `callPluginMethod("get_download_status", {appid})`.
 
 ## Key Paths (Linux/SteamOS)
 
-| Component | Path |
-|-----------|------|
-| Steam root | `~/.steam/steam` ou `~/.local/share/Steam` |
-| Manifests | `{steam_root}/depotcache/*.manifest` |
-| SLSsteam config | `~/.config/SLSsteam/config.yaml` |
-| ACCELA | `~/.local/share/ACCELA/` ou `~/accela/` |
-| SLSsteam | `~/.local/share/SLSsteam/` ou `~/SLSsteam/` |
-| Ryuu cookie | `{plugin_dir}/data/ryuu_cookie.txt` |
-| API manifest | `{plugin_dir}/api.json` |
+| Component       | Path                                        |
+| --------------- | ------------------------------------------- |
+| Steam root      | `~/.steam/steam` ou `~/.local/share/Steam`  |
+| Manifests       | `{steam_root}/depotcache/*.manifest`        |
+| SLSsteam config | `~/.config/SLSsteam/config.yaml`            |
+| ACCELA          | `~/.local/share/ACCELA/` ou `~/accela/`     |
+| SLSsteam        | `~/.local/share/SLSsteam/` ou `~/SLSsteam/` |
+| Ryuu cookie     | `{plugin_dir}/data/ryuu_cookie.txt`         |
+| API manifest    | `{plugin_dir}/api.json`                     |
 
 ## UI Design
 
 ### Game List (Main Screen)
+
 - Search bar
 - Game cards with status indicator (installed/downloading %/pending)
 - Settings button
 
 ### Game Detail (Per Game)
+
 - AppID, status, depot, manifest info
 - Actions: Download/Update, Manage DLCs, Apply Fix, Workshop, FakeAppId/Token, Achievements, Remove
 
 ### Settings
+
 - API credentials (Ryuu cookie, Morrenus key) — masked input
 - Dependency status (SLSsteam, ACCELA, .NET)
 - Reinstall dependencies button
@@ -165,14 +174,14 @@ Frontend faz polling via `callPluginMethod("get_download_status", {appid})`.
 
 ## Decision Log
 
-| # | Decision | Alternatives | Rationale |
-|---|----------|-------------|-----------|
-| 1 | Flow: buy in store → list in plugin → download | Manual AppID; external list | Natural UX, integrates with SLSsteam |
-| 2 | Advanced options (depot, manifest, fixes) | Simple install-only button | Feature parity with LuaToolsLinux |
-| 3 | Same APIs as LuaToolsLinux (Morrenus + Ryuu) | Morrenus only; custom API | Proven behavior |
-| 4 | Auto-install deps via enter-the-wired | Require pre-install | Better UX, self-contained |
-| 5 | Hierarchical menu (list → detail) | Single screen; tabs | Best use of QAM space |
-| 6 | DepotDownloaderMod CLI default + ACCELA GUI fallback | CLI only; GUI only | Hybrid covers simple + advanced |
-| 7 | Port LuaToolsLinux Python backend | Rewrite; shell wrapper | Tested logic, same formats, low risk |
-| 8 | Reuse LuaToolsLinux configs if present | Always configure from scratch | Avoids rework for existing users |
-| 9 | Game Mode only | Game Mode + Desktop | Clear scope, Desktop has LuaToolsLinux |
+| #   | Decision                                             | Alternatives                  | Rationale                              |
+| --- | ---------------------------------------------------- | ----------------------------- | -------------------------------------- |
+| 1   | Flow: buy in store → list in plugin → download       | Manual AppID; external list   | Natural UX, integrates with SLSsteam   |
+| 2   | Advanced options (depot, manifest, fixes)            | Simple install-only button    | Feature parity with LuaToolsLinux      |
+| 3   | Same APIs as LuaToolsLinux (Morrenus + Ryuu)         | Morrenus only; custom API     | Proven behavior                        |
+| 4   | Auto-install deps via enter-the-wired                | Require pre-install           | Better UX, self-contained              |
+| 5   | Hierarchical menu (list → detail)                    | Single screen; tabs           | Best use of QAM space                  |
+| 6   | DepotDownloaderMod CLI default + ACCELA GUI fallback | CLI only; GUI only            | Hybrid covers simple + advanced        |
+| 7   | Port LuaToolsLinux Python backend                    | Rewrite; shell wrapper        | Tested logic, same formats, low risk   |
+| 8   | Reuse LuaToolsLinux configs if present               | Always configure from scratch | Avoids rework for existing users       |
+| 9   | Game Mode only                                       | Game Mode + Desktop           | Clear scope, Desktop has LuaToolsLinux |
