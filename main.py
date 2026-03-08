@@ -43,13 +43,14 @@ class Plugin:
         logger.info("DeckTools: Plugin loaded")
         try:
             from api_manifest import init_apis
-            from downloads import init_applist, init_games_db
+            from downloads import init_applist, init_games_db, validate_ddm_cache
             from paths import get_platform_summary
 
             summary = get_platform_summary()
             logger.info(f"DeckTools: Platform summary: {json.dumps(summary)}")
 
             await init_apis()
+            await validate_ddm_cache()
             await init_applist()
             await init_games_db()
         except Exception as exc:

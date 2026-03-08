@@ -66,7 +66,7 @@ const strings: Record<Lang, Record<string, string>> = {
     achievementStatusNotInstalled: "SLScheevo not installed",
     achievementStatusNotConfigured: "Run SLScheevo in terminal to set up login",
     achievementStatusReady: "Ready to generate",
-    achievementStatusGenerated: "Achievements generated",
+    achievementStatusGenerated: "Achievements generated (Restart Steam)",
     achievementStatusGenerating: "Generating achievements...",
     downloadSlscheevo: "Download SLScheevo",
     downloadingSlscheevo: "Downloading SLScheevo...",
@@ -190,13 +190,13 @@ const strings: Record<Lang, Record<string, string>> = {
     toastDlcsNoneFound: "No DLCs found for this game",
     toastGoldbergApplied: "Goldberg applied",
     toastGoldbergRemoved: "Goldberg removed",
-    toastAchievementsGenerated: "Achievements generated",
+    toastAchievementsGenerated: "Achievements generated! Restart Steam.",
     toastAchievementsFailed: "Achievement generation failed",
     toastSlscheevoInstalled: "SLScheevo installed",
     toastSlscheevoDownloadFailed: "SLScheevo download failed",
     syncAllAchievements: "Sync Achievements",
     syncingAchievements: "Syncing {0}/{1}...",
-    toastSyncComplete: "Achievements synced!",
+    toastSyncComplete: "Achievements synced! Restart Steam.",
     toastSyncFailed: "Sync failed",
     toastLuaRemoved: "Lua script removed",
     toastNativeFixApplied: "Permissions set on {0} files",
@@ -280,7 +280,7 @@ const strings: Record<Lang, Record<string, string>> = {
     achievementStatusNotInstalled: "SLScheevo não instalado",
     achievementStatusNotConfigured: "Execute SLScheevo no terminal para configurar login",
     achievementStatusReady: "Pronto para gerar",
-    achievementStatusGenerated: "Conquistas geradas",
+    achievementStatusGenerated: "Conquistas geradas (Reinicie o Steam)",
     achievementStatusGenerating: "Gerando conquistas...",
     downloadSlscheevo: "Baixar SLScheevo",
     downloadingSlscheevo: "Baixando SLScheevo...",
@@ -404,13 +404,13 @@ const strings: Record<Lang, Record<string, string>> = {
     toastDlcsNoneFound: "Nenhum DLC encontrado para este jogo",
     toastGoldbergApplied: "Goldberg aplicado",
     toastGoldbergRemoved: "Goldberg removido",
-    toastAchievementsGenerated: "Conquistas geradas",
+    toastAchievementsGenerated: "Conquistas geradas! Reinicie o Steam.",
     toastAchievementsFailed: "Geração de conquistas falhou",
     toastSlscheevoInstalled: "SLScheevo instalado",
     toastSlscheevoDownloadFailed: "Download do SLScheevo falhou",
     syncAllAchievements: "Sincronizar Conquistas",
     syncingAchievements: "Sincronizando {0}/{1}...",
-    toastSyncComplete: "Conquistas sincronizadas!",
+    toastSyncComplete: "Conquistas sincronizadas! Reinicie o Steam.",
     toastSyncFailed: "Sincronização falhou",
     toastLuaRemoved: "Script Lua removido",
     toastNativeFixApplied: "Permissões definidas em {0} arquivos",
@@ -465,7 +465,7 @@ export function setLanguage(lang: Lang) {
   currentLang = lang;
   try {
     localStorage.setItem("decktools_lang", lang);
-  } catch {}
+  } catch { }
   listeners.forEach((fn) => fn());
 }
 

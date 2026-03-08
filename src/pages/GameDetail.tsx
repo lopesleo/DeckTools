@@ -90,6 +90,7 @@ export function GameDetail({ appid }: GameDetailProps) {
   const [fixStatus, setFixStatus] = useState<any>(null);
   const [installedFixes, setInstalledFixes] = useState<InstalledFix[]>([]);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const [removeCompatdata, setRemoveCompatdata] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
   const [goldbergApplied, setGoldbergApplied] = useState(false);
@@ -595,18 +596,18 @@ export function GameDetail({ appid }: GameDetailProps) {
                 {downloadState.status === "depot_download"
                   ? (downloadState.depotProgress || t("statusDownloadingGame"))
                   : (<>
-                      {downloadState.currentApi && `API: ${downloadState.currentApi}`}
-                      {" — "}
-                      {downloadState.status === "downloading" ? t("statusDownloading")
-                        : downloadState.status === "processing" ? t("statusProcessing")
+                    {downloadState.currentApi && `API: ${downloadState.currentApi}`}
+                    {" — "}
+                    {downloadState.status === "downloading" ? t("statusDownloading")
+                      : downloadState.status === "processing" ? t("statusProcessing")
                         : downloadState.status === "configuring" ? t("statusConfiguring")
-                        : downloadState.status === "installing" ? t("statusInstalling")
-                        : downloadState.status === "queued" ? t("statusQueued")
-                        : downloadState.status === "checking" ? `${t("statusChecking")} ${downloadState.currentApi || ""}...`
-                        : downloadState.status}
-                      {downloadState.speed > 0 &&
-                        ` — ${formatSpeed(downloadState.speed)}`}
-                    </>)
+                          : downloadState.status === "installing" ? t("statusInstalling")
+                            : downloadState.status === "queued" ? t("statusQueued")
+                              : downloadState.status === "checking" ? `${t("statusChecking")} ${downloadState.currentApi || ""}...`
+                                : downloadState.status}
+                    {downloadState.speed > 0 &&
+                      ` — ${formatSpeed(downloadState.speed)}`}
+                  </>)
                 }
               </div>
             </PanelSectionRow>
@@ -681,49 +682,62 @@ export function GameDetail({ appid }: GameDetailProps) {
       {/* Game Management */}
       <PanelSection title={t("gameManagement")}>
         <PanelSectionRow>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <div style={{ flex: 1 }}>
-              <TextField
-                label="FakeAppId"
-                value={fakeIdValue}
-                onChange={(e: any) => setFakeIdValue(e?.target?.value ?? "480")}
-                disabled={fakeAppId}
-              />
-            </div>
-          </div>
-        </PanelSectionRow>
-        <ActionButton
-          label={
-            fakeAppId
-              ? `${t("removeFakeAppId")} (${fakeIdValue})`
-              : `${t("addFakeAppId")} (${fakeIdValue})`
-          }
-          onClick={handleToggleFakeAppId}
-        />
-        <ActionButton
-          label={hasToken ? t("removeToken") : t("addToken")}
-          onClick={handleToggleToken}
-        />
-        <ActionButton
-          label={busy === "dlcs" ? t("fetchingDlcs") : dlcLabel}
-          onClick={handleToggleDlcs}
-          disabled={busy === "dlcs"}
-        />
-        {installPath && (
-          <ActionButton
-            label={
-              busy === "goldberg"
-                ? (goldbergApplied ? t("removingGoldberg") : t("applyingGoldberg"))
-                : (goldbergApplied ? t("removeGoldberg") : t("applyGoldberg"))
-            }
-            onClick={handleToggleGoldberg}
-            disabled={busy === "goldberg"}
-            description={
-              goldbergApplied
-                ? t("restoreOriginalDlls")
-                : t("replaceWithGoldberg")
-            }
+          <ToggleField
+            label={t("advancedOptions")}
+            checked={showAdvancedOptions}
+            onChange={setShowAdvancedOptions}
+            description={t("gameManagement")}
           />
+        </PanelSectionRow>
+
+        {showAdvancedOptions && (
+          <>
+            <PanelSectionRow>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div style={{ flex: 1 }}>
+                  <TextField
+                    label="FakeAppId"
+                    value={fakeIdValue}
+                    onChange={(e: any) => setFakeIdValue(e?.target?.value ?? "480")}
+                    disabled={fakeAppId}
+                  />
+                </div>
+              </div>
+            </PanelSectionRow>
+            <ActionButton
+              label={
+                fakeAppId
+                  ? `${t("removeFakeAppId")} (${fakeIdValue})`
+                  : `${t("addFakeAppId")} (${fakeIdValue})`
+              }
+              onClick={handleToggleFakeAppId}
+            />
+            <ActionButton
+              label={hasToken ? t("removeToken") : t("addToken")}
+              onClick={handleToggleToken}
+            />
+            <ActionButton
+              label={busy === "dlcs" ? t("fetchingDlcs") : dlcLabel}
+              onClick={handleToggleDlcs}
+              disabled={busy === "dlcs"}
+            />
+            {installPath && (
+              <ActionButton
+                label={
+                  busy === "goldberg"
+                    ? (goldbergApplied ? t("removingGoldberg") : t("applyingGoldberg"))
+                    : (goldbergApplied ? t("removeGoldberg") : t("applyGoldberg"))
+                }
+                onClick={handleToggleGoldberg}
+                disabled={busy === "goldberg"}
+                description={
+                  goldbergApplied
+                    ? t("restoreOriginalDlls")
+                    : t("replaceWithGoldberg")
+                }
+              />
+            )}
+          </>
         )}
       </PanelSection>
 

@@ -538,6 +538,100 @@ def _remove_from_additional_apps(appid: int) -> None:
         pass
 
 
+def _find_game_dir_fallback(appid: int) -> str:
+    """Multi-strategy fallback to find a game's install directory when the ACF is missing.
+
+    Strategies (in order):
+    1. Steam API installdir — official directory name from Steam store
+    2. Lua file installdir hint — parsed from the download's lua script
+    3. Name match — fuzzy match game name against steamapps/common entries
+    4. All library folders — repeat strategies across all Steam library paths
+    """
+    from steam_utils import detect_steam_install_path
+
+    steam_path = detect_steam_install_path()
+    if not steam_path:
+        return ""
+
+    # Collect all library paths (main + additional)
+    library_paths = [steam_path]
+    try:
+        library_vdf = os.path.join(steam_path, "config", "libraryfolders.vdf")
+        if os.path.exists(library_vdf):
+            from steam_utils import _parse_vdf_simple
+            with open(library_vdf, "r", encoding="utf-8") as f:
+                data = _parse_vdf_simple(f.read())
+            for folder in data.get("libraryfolders", {}).values():
+                if isinstance(folder, dict):
+                    p = folder.get("path", "").replace("\\\\", "\\")
+                    if p and p not in library_paths:
+                        library_paths.append(p)
+    except Exception:
+        pass
+
+    # Strategy 1: Steam API installdir
+    try:
+        from downloads import _fetch_installdir_from_api
+        import asyncio
+        loop = asyncio.get_event_loop()
+        api_dir = loop.run_until_complete(_fetch_installdir_from_api(appid))
+        if api_dir:
+            for lib in library_paths:
+                candidate = os.path.join(lib, "steamapps", "common", api_dir)
+                if os.path.isdir(candidate):
+                    return candidate
+    except Exception:
+        pass
+
+    # Strategy 2: Lua file — extract game name from download log
+    game_name = ""
+    try:
+        from downloads import _get_loaded_app_name, _get_app_name_from_applist
+        game_name = _get_loaded_app_name(appid) or _get_app_name_from_applist(appid) or ""
+    except Exception:
+        pass
+
+    # Strategy 3: Name match across all library folders
+    if game_name:
+        game_lower = game_name.lower()
+        for lib in library_paths:
+            common_path = os.path.join(lib, "steamapps", "common")
+            if not os.path.isdir(common_path):
+                continue
+            try:
+                # Exact match first
+                for d in os.listdir(common_path):
+                    if d.lower() == game_lower:
+                        candidate = os.path.join(common_path, d)
+                        if os.path.isdir(candidate):
+                            return candidate
+                # Prefix match as fallback
+                for d in os.listdir(common_path):
+                    dl = d.lower()
+                    if dl.startswith(game_lower[:20]) or game_lower.startswith(dl[:20]):
+                        candidate = os.path.join(common_path, d)
+                        if os.path.isdir(candidate):
+                            return candidate
+            except Exception:
+                continue
+
+    # Strategy 4: Scan for appid in directory names (e.g. "app_2417610")
+    for lib in library_paths:
+        common_path = os.path.join(lib, "steamapps", "common")
+        if not os.path.isdir(common_path):
+            continue
+        try:
+            for d in os.listdir(common_path):
+                if str(appid) in d:
+                    candidate = os.path.join(common_path, d)
+                    if os.path.isdir(candidate):
+                        return candidate
+        except Exception:
+            continue
+
+    return ""
+
+
 def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
     """Full uninstall: game files, appmanifest, depotcache manifests, lua, and all SLSsteam config entries."""
     removed = []
@@ -548,6 +642,14 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
         path_info = get_game_install_path_response(appid)
         install_path = path_info.get("installPath") if isinstance(path_info, dict) else None
         library_path = path_info.get("libraryPath") if isinstance(path_info, dict) else None
+
+        # Fallback chain: multiple strategies to find game dir when ACF is gone
+        if not install_path or not os.path.exists(install_path):
+            install_path = _find_game_dir_fallback(appid)
+            if install_path:
+                from steam_utils import detect_steam_install_path
+                library_path = library_path or detect_steam_install_path()
+                logger.info(f"DeckTools: Found game dir via fallback: {install_path}")
 
         if install_path and os.path.exists(install_path):
             shutil.rmtree(install_path, ignore_errors=True)

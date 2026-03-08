@@ -45,6 +45,7 @@ export function GameList() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const [showMoreResults, setShowMoreResults] = useState(false);
   const [slscheevoReady, setSlscheevoReady] = useState(false);
   const [syncState, setSyncState] = useState<any>(null);
   const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -76,7 +77,7 @@ export function GameList() {
               g.hasAchievements = !!achResult.map[g.appid];
             }
           }
-        } catch {}
+        } catch { }
       }
 
       gameList.sort((a, b) => a.name.localeCompare(b.name));
@@ -181,10 +182,10 @@ export function GameList() {
     (async () => {
       try {
         const result = await checkSlscheevoInstalled();
-        if (result.success && result.installed && result.loginReady) {
+        if (result.success && result.installed) {
           setSlscheevoReady(true);
         }
-      } catch {}
+      } catch { }
     })();
 
     const detectAppId = async () => {
@@ -194,14 +195,14 @@ export function GameList() {
           setAddAppId(String(result.appid));
           return;
         }
-      } catch {}
+      } catch { }
       try {
         const path = window.location.pathname || "";
         const match = path.match(/\/library\/app\/(\d+)/);
         if (match) {
           setAddAppId(match[1]);
         }
-      } catch {}
+      } catch { }
     };
     detectAppId();
 
@@ -225,7 +226,7 @@ export function GameList() {
             startPolling(id);
           }
         }
-      } catch {}
+      } catch { }
     })();
 
     return () => cleanup1();
@@ -259,6 +260,7 @@ export function GameList() {
     setSearching(true);
     setSearchError("");
     setSearchResults([]);
+    setShowMoreResults(false);
     try {
       const result = await searchMorrenus(searchQuery.trim());
       if (result.success) {
@@ -311,7 +313,7 @@ export function GameList() {
             setTimeout(() => setSyncState(null), 3000);
           }
         }
-      } catch {}
+      } catch { }
     }, 2000);
   };
 
@@ -332,10 +334,10 @@ export function GameList() {
   const filtered = (
     search
       ? games.filter(
-          (g: GameInfo) =>
-            g.name.toLowerCase().includes(search.toLowerCase()) ||
-            String(g.appid).includes(search),
-        )
+        (g: GameInfo) =>
+          g.name.toLowerCase().includes(search.toLowerCase()) ||
+          String(g.appid).includes(search),
+      )
       : games
   )
     .slice()
@@ -372,8 +374,8 @@ export function GameList() {
                 padding: "6px",
                 color:
                   addStatus.startsWith(t("error")) ||
-                  addStatus === t("invalidAppId") ||
-                  addStatus === t("downloadFailed")
+                    addStatus === t("invalidAppId") ||
+                    addStatus === t("downloadFailed")
                     ? "#ff6b6b"
                     : "#8bca68",
                 fontSize: "12px",
@@ -430,7 +432,7 @@ export function GameList() {
                 {searchResults.length} {t("results")}
               </div>
             </PanelSectionRow>
-            {searchResults.slice(0, 15).map((r: SearchResult) => (
+            {searchResults.slice(0, showMoreResults ? 15 : 5).map((r: SearchResult) => (
               <PanelSectionRow key={r.appid}>
                 <ButtonItem
                   layout="below"
@@ -441,7 +443,14 @@ export function GameList() {
                 </ButtonItem>
               </PanelSectionRow>
             ))}
-            {searchResults.length > 15 && (
+            {searchResults.length > 5 && !showMoreResults && (
+              <PanelSectionRow>
+                <ButtonItem layout="below" onClick={() => setShowMoreResults(true)}>
+                  {t("showMoreResults") || "Show More Results"} (+{searchResults.length - 5})
+                </ButtonItem>
+              </PanelSectionRow>
+            )}
+            {searchResults.length > 15 && showMoreResults && (
               <PanelSectionRow>
                 <div
                   style={{

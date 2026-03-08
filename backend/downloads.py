@@ -511,16 +511,25 @@ async def _determine_install_dir(appid: int, game_name: str) -> str:
 # DepotDownloader integration — download actual game files
 # ---------------------------------------------------------------------------
 
+# Persistent directory where DDM is cached after extraction
+_DDM_CACHE_DIR = "/home/deck/.local/share/DeckTools/deps"
+
 # DepotDownloaderMod executable search paths (self-contained build)
 _DDM_EXE_SEARCH_PATHS = [
-    "/home/deck/.local/share/DeckTools/deps/DepotDownloaderMod",
+    os.path.join(_DDM_CACHE_DIR, "DepotDownloaderMod"),
     "/home/deck/.local/share/ACCELA/deps/DepotDownloaderMod",
 ]
 
 # DepotDownloaderMod DLL search paths (framework-dependent build)
 _DDM_DLL_SEARCH_PATHS = [
-    "/home/deck/.local/share/DeckTools/deps/DepotDownloaderMod.dll",
+    os.path.join(_DDM_CACHE_DIR, "DepotDownloaderMod.dll"),
     "/home/deck/.local/share/ACCELA/deps/DepotDownloaderMod.dll",
+]
+
+# Known locations where ACCELA AppImage may exist
+_ACCELA_APPIMAGE_CANDIDATES = [
+    "/home/deck/.local/share/ACCELA/ACCELA.AppImage",
+    os.path.expanduser("~/.local/share/ACCELA/ACCELA.AppImage"),
 ]
 
 # dotnet binary search paths
@@ -528,7 +537,77 @@ _DOTNET_SEARCH_PATHS = [
     "/home/deck/.dotnet/dotnet",
     "/home/deck/.local/share/dotnet/dotnet",
     os.path.expanduser("~/.dotnet/dotnet"),
+    os.path.join(_DDM_CACHE_DIR, "dotnet", "dotnet"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# DDM cache validation
+# ---------------------------------------------------------------------------
+
+_DDM_CACHE_MARKER = os.path.join(_DDM_CACHE_DIR, ".ddm_cache_info.json")
+
+
+def _write_ddm_cache_marker(appimage_path: str) -> None:
+    """Record AppImage identity alongside cached DDM for staleness detection."""
+    try:
+        st = os.stat(appimage_path)
+        marker = {
+            "appimage_path": appimage_path,
+            "mtime": st.st_mtime,
+            "size": st.st_size,
+        }
+        os.makedirs(_DDM_CACHE_DIR, exist_ok=True)
+        with open(_DDM_CACHE_MARKER, "w", encoding="utf-8") as f:
+            json.dump(marker, f)
+    except Exception as exc:
+        logger.warning(f"DeckTools: Failed to write DDM cache marker: {exc}")
+
+
+def _is_ddm_cache_valid() -> bool:
+    """Check if cached DDM matches the current ACCELA AppImage."""
+    appimage = _find_accela_appimage()
+    if not appimage:
+        return True  # No AppImage to compare against
+
+    ddm_exe = os.path.join(_DDM_CACHE_DIR, "DepotDownloaderMod")
+    ddm_dll = os.path.join(_DDM_CACHE_DIR, "DepotDownloaderMod.dll")
+    has_cache = os.path.exists(ddm_exe) or os.path.exists(ddm_dll)
+
+    if not has_cache:
+        return True  # Nothing cached to invalidate
+
+    if not os.path.exists(_DDM_CACHE_MARKER):
+        return False  # Cache exists but no marker — invalidate to be safe
+
+    try:
+        with open(_DDM_CACHE_MARKER, "r", encoding="utf-8") as f:
+            marker = json.load(f)
+        st = os.stat(appimage)
+        return (marker.get("mtime") == st.st_mtime
+                and marker.get("size") == st.st_size)
+    except Exception:
+        return False
+
+
+def _invalidate_ddm_cache() -> None:
+    """Remove all cached DDM files so they get re-extracted."""
+    import shutil
+    try:
+        if os.path.isdir(_DDM_CACHE_DIR):
+            shutil.rmtree(_DDM_CACHE_DIR, ignore_errors=True)
+            logger.info("DeckTools: DDM cache invalidated (AppImage changed)")
+    except Exception as exc:
+        logger.warning(f"DeckTools: Failed to invalidate DDM cache: {exc}")
+
+
+async def validate_ddm_cache() -> None:
+    """Check DDM cache validity on startup; invalidate if stale."""
+    loop = asyncio.get_event_loop()
+    valid = await loop.run_in_executor(None, _is_ddm_cache_valid)
+    if not valid:
+        logger.info("DeckTools: ACCELA AppImage changed, invalidating DDM cache")
+        await loop.run_in_executor(None, _invalidate_ddm_cache)
 
 
 def _find_dotnet() -> str:
@@ -544,10 +623,199 @@ def _find_dotnet() -> str:
     return ""
 
 
+def _find_accela_appimage() -> str:
+    """Find the ACCELA AppImage file."""
+    for path in _ACCELA_APPIMAGE_CANDIDATES:
+        if os.path.isfile(path):
+            return path
+    # Scan ACCELA directories for any .AppImage file
+    from paths import find_accela_root
+    accela_root = find_accela_root()
+    if accela_root:
+        try:
+            for f in os.listdir(accela_root):
+                if f.lower().endswith(".appimage"):
+                    return os.path.join(accela_root, f)
+        except Exception:
+            pass
+    return ""
+
+
+def _copy_ddm_from_tree(root_dir: str) -> str:
+    """Search a directory tree for DDM files and copy them to the persistent cache.
+
+    Returns the path to the cached DDM (exe or dll), or "" if not found.
+    """
+    import shutil
+
+    ddm_found = ""
+    ddm_dll_found = ""
+    dotnet_found = ""
+    for dirpath, _dirs, files in os.walk(root_dir):
+        for fname in files:
+            fl = fname.lower()
+            if fname == "DepotDownloaderMod" and not fl.endswith(".dll"):
+                ddm_found = os.path.join(dirpath, fname)
+            elif fname == "DepotDownloaderMod.dll":
+                ddm_dll_found = os.path.join(dirpath, fname)
+            elif fname == "dotnet" and not fl.endswith((".dll", ".so")):
+                dotnet_found = os.path.join(dirpath, fname)
+
+    if not ddm_found and not ddm_dll_found:
+        logger.warning("DeckTools: DepotDownloaderMod not found in tree")
+        return ""
+
+    os.makedirs(_DDM_CACHE_DIR, exist_ok=True)
+
+    if ddm_found:
+        dest = os.path.join(_DDM_CACHE_DIR, "DepotDownloaderMod")
+        shutil.copy2(ddm_found, dest)
+        os.chmod(dest, 0o755)
+        logger.info(f"DeckTools: Cached DDM executable -> {dest}")
+        return dest
+
+    # Copy ALL files from DDM directory (runtimeconfig.json, deps, etc.)
+    ddm_src_dir = os.path.dirname(ddm_dll_found)
+    for item in os.listdir(ddm_src_dir):
+        src = os.path.join(ddm_src_dir, item)
+        dst = os.path.join(_DDM_CACHE_DIR, item)
+        if os.path.isfile(src):
+            shutil.copy2(src, dst)
+        elif os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+    dest = os.path.join(_DDM_CACHE_DIR, "DepotDownloaderMod.dll")
+
+    # Copy dotnet if found and not available system-wide
+    if dotnet_found and not _find_dotnet():
+        dotnet_dest_dir = os.path.join(_DDM_CACHE_DIR, "dotnet")
+        dotnet_src_dir = os.path.dirname(dotnet_found)
+        if os.path.isdir(dotnet_src_dir):
+            shutil.copytree(dotnet_src_dir, dotnet_dest_dir, dirs_exist_ok=True)
+            os.chmod(os.path.join(dotnet_dest_dir, "dotnet"), 0o755)
+            logger.info(f"DeckTools: Cached dotnet runtime -> {dotnet_dest_dir}")
+
+    logger.info(f"DeckTools: Cached DDM directory ({len(os.listdir(ddm_src_dir))} files) -> {_DDM_CACHE_DIR}")
+    return dest
+
+
+def _extract_ddm_via_mount(appimage: str) -> str:
+    """Fast path: FUSE-mount the AppImage and copy DDM without full extraction."""
+    import signal
+    import subprocess
+
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            [appimage, "--appimage-mount"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        mount_point = proc.stdout.readline().decode("utf-8").strip()
+        if not mount_point or not os.path.isdir(mount_point):
+            logger.warning(f"DeckTools: AppImage mount returned invalid path: {mount_point!r}")
+            return ""
+
+        logger.info(f"DeckTools: AppImage FUSE-mounted at {mount_point}")
+        return _copy_ddm_from_tree(mount_point)
+
+    except Exception as exc:
+        logger.warning(f"DeckTools: AppImage FUSE mount failed: {exc}")
+        return ""
+    finally:
+        if proc and proc.poll() is None:
+            try:
+                proc.send_signal(signal.SIGTERM)
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+
+def _extract_ddm_via_full_extract(appimage: str) -> str:
+    """Fallback: full --appimage-extract, copy DDM, then clean up."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    extract_dir = os.path.join(tempfile.gettempdir(), "decktools_appimage_extract")
+    try:
+        if os.path.exists(extract_dir):
+            shutil.rmtree(extract_dir, ignore_errors=True)
+        os.makedirs(extract_dir, exist_ok=True)
+
+        proc = subprocess.run(
+            [appimage, "--appimage-extract"],
+            cwd=extract_dir,
+            capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode != 0:
+            logger.warning(f"DeckTools: AppImage extraction failed: {proc.stderr[:200]}")
+            return ""
+
+        squashfs_root = os.path.join(extract_dir, "squashfs-root")
+        if not os.path.isdir(squashfs_root):
+            logger.warning("DeckTools: squashfs-root not found after extraction")
+            return ""
+
+        return _copy_ddm_from_tree(squashfs_root)
+
+    except Exception as exc:
+        logger.warning(f"DeckTools: AppImage full extraction failed: {exc}")
+        return ""
+    finally:
+        try:
+            if os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def _extract_ddm_from_appimage() -> str:
+    """Extract DepotDownloaderMod from ACCELA AppImage with caching.
+
+    Tries fast FUSE mount first, falls back to full extraction.
+    Writes a cache marker so staleness can be detected on next startup.
+    """
+    import stat as stat_mod
+
+    appimage = _find_accela_appimage()
+    if not appimage:
+        return ""
+
+    logger.info(f"DeckTools: Found ACCELA AppImage at {appimage}, extracting DDM...")
+
+    try:
+        st = os.stat(appimage)
+        os.chmod(appimage, st.st_mode | stat_mod.S_IEXEC)
+    except Exception:
+        pass
+
+    # Fast path: FUSE mount (no disk extraction)
+    result = _extract_ddm_via_mount(appimage)
+    if result:
+        _write_ddm_cache_marker(appimage)
+        return result
+
+    # Fallback: full extraction
+    logger.info("DeckTools: FUSE mount failed, falling back to --appimage-extract")
+    result = _extract_ddm_via_full_extract(appimage)
+    if result:
+        _write_ddm_cache_marker(appimage)
+    return result
+
+
 def _find_ddm_executable() -> tuple[list[str], str]:
     """Find DepotDownloaderMod and return (cmd_prefix, description).
 
-    Tries self-contained executable first (like workshop.py), then dotnet + DLL.
+    Search order:
+    1. Custom workshop tool path (user-configured)
+    2. Known executable paths (DeckTools/deps, ACCELA/deps)
+    3. Plugin backend directory
+    4. DLL paths with dotnet runtime
+    5. Auto-extract from ACCELA AppImage (last resort)
+
     Returns ([], "") if not found.
     """
     import stat as stat_mod
@@ -609,11 +877,35 @@ def _find_ddm_executable() -> tuple[list[str], str]:
     if dotnet:
         for path in _DDM_DLL_SEARCH_PATHS:
             if os.path.exists(path):
-                return [dotnet, path], f"dotnet+dll: {path}"
+                # Verify runtimeconfig.json exists alongside the DLL
+                rc_path = path.replace(".dll", ".runtimeconfig.json")
+                if os.path.exists(rc_path):
+                    return [dotnet, path], f"dotnet+dll: {path}"
+                else:
+                    logger.warning(f"DeckTools: DDM DLL found at {path} but missing runtimeconfig.json, skipping")
 
         bundled_dll = os.path.join(base, "deps", "DepotDownloaderMod.dll")
         if os.path.exists(bundled_dll):
             return [dotnet, bundled_dll], f"dotnet+dll: {bundled_dll}"
+
+    # 5. Try extracting from ACCELA AppImage
+    extracted = _extract_ddm_from_appimage()
+    if extracted:
+        if extracted.endswith(".dll"):
+            # Check for dotnet again (may have been extracted from AppImage)
+            dotnet = _find_dotnet()
+            # Also check extracted dotnet
+            extracted_dotnet = os.path.join(_DDM_CACHE_DIR, "dotnet", "dotnet")
+            if not dotnet and os.path.exists(extracted_dotnet):
+                dotnet = extracted_dotnet
+            if dotnet:
+                return [dotnet, extracted], f"dotnet+dll (extracted from AppImage): {extracted}"
+        else:
+            try:
+                os.chmod(extracted, 0o755)
+            except Exception:
+                pass
+            return [extracted], f"executable (extracted from AppImage): {extracted}"
 
     return [], ""
 
@@ -656,11 +948,23 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
     cmd_prefix, ddm_desc = _find_ddm_executable()
     if not cmd_prefix:
-        logger.error("DeckTools: DepotDownloaderMod not found (no executable or dotnet+dll)")
-        _set_download_state(appid, {
-            "status": "failed",
-            "error": "DepotDownloaderMod not found. Install ACCELA deps or set workshop tool path.",
-        })
+        appimage = _find_accela_appimage()
+        if appimage:
+            logger.error(
+                f"DeckTools: ACCELA AppImage found at {appimage} but DepotDownloaderMod "
+                "could not be extracted. Try reinstalling dependencies in Settings."
+            )
+            error_msg = (
+                "DepotDownloaderMod not found inside ACCELA AppImage. "
+                "Go to Settings > Install Dependencies to fix."
+            )
+        else:
+            logger.error("DeckTools: DepotDownloaderMod not found (no executable or dotnet+dll)")
+            error_msg = (
+                "DepotDownloaderMod not found. "
+                "Go to Settings > Install Dependencies or set the workshop tool path."
+            )
+        _set_download_state(appid, {"status": "failed", "error": error_msg})
         return
 
     logger.info(f"DeckTools: Using DDM: {ddm_desc}")
@@ -697,7 +1001,9 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
     if dotnet_path:
         clean_env["DOTNET_ROOT"] = os.path.dirname(dotnet_path)
 
-    output_log = []
+    _DEPOT_MAX_RETRIES = 3
+    _DEPOT_RETRY_DELAYS = [5, 15, 30]
+    _AUTH_ERROR_MARKERS = ("access denied", "manifest not available", "no subscription", "purchase")
 
     for idx, depot_info in enumerate(depots):
         depot_id = depot_info["depot"]
@@ -705,13 +1011,6 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
         if _is_download_cancelled(appid):
             return
-
-        _set_download_state(appid, {
-            "status": "depot_download",
-            "depotProgress": f"Depot {idx+1}/{total_depots}",
-            "currentDepot": depot_id,
-            "depotPercent": 0,
-        })
 
         # Find the manifest file in depotcache
         manifest_file = os.path.join(depotcache_dir, f"{depot_id}_{manifest_id}.manifest")
@@ -725,12 +1024,10 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
             "-os", "linux",
         ]
 
-        # Add manifest file if it exists in depotcache
         if os.path.exists(manifest_file):
             cmd.extend(["-manifestfile", manifest_file])
             logger.info(f"DeckTools: Using manifest file: {manifest_file}")
 
-        # Add depot keys file if it has content
         try:
             if os.path.getsize(keys_path) > 0:
                 cmd.extend(["-depotkeys", keys_path])
@@ -739,70 +1036,109 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
         cmd.append("-validate")
 
-        logger.info(f"DeckTools: DepotDownloader cmd: {' '.join(cmd)}")
+        depot_succeeded = False
 
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=clean_env,
-            )
-
-            percent_re = re.compile(r"(\d{1,3}(?:\.\d{1,2})?)%")
-            last_line = ""
-
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break  # EOF — stdout closed, process finishing
-
+        for attempt in range(_DEPOT_MAX_RETRIES):
+            if attempt > 0:
+                delay = _DEPOT_RETRY_DELAYS[min(attempt - 1, len(_DEPOT_RETRY_DELAYS) - 1)]
+                logger.info(f"DeckTools: Retrying depot {depot_id} (attempt {attempt + 1}/{_DEPOT_MAX_RETRIES}) after {delay}s")
+                _set_download_state(appid, {
+                    "depotProgress": f"Depot {idx+1}/{total_depots}: retry {attempt+1} in {delay}s...",
+                })
+                await asyncio.sleep(delay)
                 if _is_download_cancelled(appid):
-                    process.kill()
                     return
 
-                clean_line = line.decode("utf-8", errors="replace").strip()
-                if clean_line:
-                    last_line = clean_line
-                    output_log.append(clean_line.lower())
-                    logger.info(f"DeckTools: DDM[{depot_id}]: {clean_line}")
-                    m = percent_re.search(clean_line)
-                    if m:
-                        pct = float(m.group(1))
-                        _set_download_state(appid, {
-                            "depotPercent": pct,
-                            "depotProgress": f"Depot {idx+1}/{total_depots}: {pct:.0f}%",
-                        })
-                    elif "%" not in clean_line:
-                        _set_download_state(appid, {
-                            "depotProgress": f"Depot {idx+1}/{total_depots}: {clean_line[:60]}",
-                        })
+            attempt_label = f" (attempt {attempt+1})" if attempt > 0 else ""
+            _set_download_state(appid, {
+                "status": "depot_download",
+                "depotProgress": f"Depot {idx+1}/{total_depots}{attempt_label}",
+                "currentDepot": depot_id,
+                "depotPercent": 0,
+            })
 
-            await process.wait()
-            rc = process.returncode
-            logger.info(f"DeckTools: DepotDownloader depot {depot_id} exit code: {rc}, last output: {last_line}")
+            logger.info(f"DeckTools: DepotDownloader cmd{attempt_label}: {' '.join(cmd)}")
 
-            # Check for auth/access errors in output
-            full_log = "\n".join(output_log)
-            auth_error = any(x in full_log for x in ("access denied", "manifest not available", "no subscription", "purchase"))
+            depot_output = []
 
-            if rc != 0 or auth_error:
-                error_msg = last_line if last_line else f"exit code {rc}"
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=clean_env,
+                )
+
+                percent_re = re.compile(r"(\d{1,3}(?:\.\d{1,2})?)%")
+                last_line = ""
+
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+
+                    if _is_download_cancelled(appid):
+                        process.kill()
+                        return
+
+                    clean_line = line.decode("utf-8", errors="replace").strip()
+                    if clean_line:
+                        last_line = clean_line
+                        depot_output.append(clean_line.lower())
+                        logger.info(f"DeckTools: DDM[{depot_id}]: {clean_line}")
+                        m = percent_re.search(clean_line)
+                        if m:
+                            pct = float(m.group(1))
+                            _set_download_state(appid, {
+                                "depotPercent": pct,
+                                "depotProgress": f"Depot {idx+1}/{total_depots}: {pct:.0f}%{attempt_label}",
+                            })
+                        elif "%" not in clean_line:
+                            _set_download_state(appid, {
+                                "depotProgress": f"Depot {idx+1}/{total_depots}: {clean_line[:60]}{attempt_label}",
+                            })
+
+                await process.wait()
+                rc = process.returncode
+                logger.info(f"DeckTools: DepotDownloader depot {depot_id} exit code: {rc}, last output: {last_line}")
+
+                full_log = "\n".join(depot_output)
+                auth_error = any(x in full_log for x in _AUTH_ERROR_MARKERS)
+
                 if auth_error:
                     error_msg = f"Access denied for depot {depot_id} (auth required)"
-                logger.warning(f"DeckTools: DepotDownloader failed for depot {depot_id}: {error_msg}")
+                    logger.warning(f"DeckTools: {error_msg} — not retrying")
+                    _set_download_state(appid, {"status": "failed", "error": f"Depot {depot_id} failed: {error_msg}"})
+                    return
+
+                if rc != 0:
+                    error_msg = last_line if last_line else f"exit code {rc}"
+                    logger.warning(f"DeckTools: Depot {depot_id} failed (attempt {attempt+1}): {error_msg}")
+                    if attempt < _DEPOT_MAX_RETRIES - 1:
+                        continue  # retry
+                    _set_download_state(appid, {
+                        "status": "failed",
+                        "error": f"Depot {depot_id} failed after {_DEPOT_MAX_RETRIES} attempts: {error_msg}",
+                    })
+                    return
+
+                # Success
+                depot_succeeded = True
+                break
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"DeckTools: Depot {depot_id} error (attempt {attempt+1}): {e}")
+                if attempt < _DEPOT_MAX_RETRIES - 1:
+                    continue
                 _set_download_state(appid, {
                     "status": "failed",
-                    "error": f"Depot {depot_id} failed: {error_msg}",
+                    "error": f"Depot {depot_id} error after {_DEPOT_MAX_RETRIES} attempts: {e}",
                 })
                 return
 
-        except Exception as e:
-            logger.error(f"DeckTools: DepotDownloader error for depot {depot_id}: {e}")
-            _set_download_state(appid, {
-                "status": "failed",
-                "error": f"Depot {depot_id} error: {e}",
-            })
+        if not depot_succeeded:
             return
 
     # Clean up temp keys file
