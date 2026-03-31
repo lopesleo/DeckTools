@@ -20,6 +20,7 @@ import {
   verifySlssteamInjected,
   getSlsPlayStatus,
   setSlsPlayStatus,
+  getSteamLibraries,
 } from "../api";
 import { useT, getLanguage, setLanguage } from "../i18n";
 
@@ -32,6 +33,7 @@ export function Settings() {
   const [playNotOwned, setPlayNotOwned] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [lang, setLang] = useState(getLanguage());
+  const [libraries, setLibraries] = useState<any[]>([]);
 
   const toast = (title: string, body?: string, duration = 3000) =>
     toaster.toast({ title, body: body || "", duration });
@@ -56,6 +58,9 @@ export function Settings() {
 
       const playResult = await getSlsPlayStatus();
       if (playResult.success) setPlayNotOwned(playResult.enabled);
+
+      const libResult = await getSteamLibraries();
+      if (libResult.success && libResult.libraries) setLibraries(libResult.libraries);
     };
     load();
   }, []);
@@ -254,6 +259,44 @@ export function Settings() {
               Steam: {platform.steam_root || t("notFound")}
             </div>
           </PanelSectionRow>
+        </PanelSection>
+      )}
+
+      {libraries.length > 0 && (
+        <PanelSection title={t("steamLibraries")}>
+          {libraries.map((lib: any, idx: number) => {
+            const freeGB = (lib.freeBytes / (1024 * 1024 * 1024)).toFixed(1);
+            const totalGB = (lib.totalBytes / (1024 * 1024 * 1024)).toFixed(1);
+            const usedPercent = lib.totalBytes > 0
+              ? Math.round(((lib.totalBytes - lib.freeBytes) / lib.totalBytes) * 100)
+              : 0;
+            return (
+              <PanelSectionRow key={lib.path}>
+                <div>
+                  <div style={{ fontSize: "12px", color: "#dcdedf" }}>
+                    {lib.path} {idx === 0 && `(${t("defaultLibrary")})`}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#8b929a" }}>
+                    {t("freeSpace", `${freeGB} / ${totalGB} GB`)} — {t("libraryGames", lib.gameCount)}
+                  </div>
+                  <div style={{
+                    height: "4px",
+                    background: "#2a2d35",
+                    borderRadius: "2px",
+                    marginTop: "4px",
+                    overflow: "hidden",
+                  }}>
+                    <div style={{
+                      height: "100%",
+                      width: `${usedPercent}%`,
+                      background: usedPercent > 90 ? "#ff4444" : usedPercent > 75 ? "#ffaa00" : "#1a9fff",
+                      borderRadius: "2px",
+                    }} />
+                  </div>
+                </div>
+              </PanelSectionRow>
+            );
+          })}
         </PanelSection>
       )}
 

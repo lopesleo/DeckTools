@@ -91,6 +91,7 @@ async def check_for_fixes(appid: int) -> dict:
 
 async def _download_and_extract_fix(appid: int, download_url: str, install_path: str, fix_type: str, game_name: str = "") -> None:
     client = await ensure_http_client("fix download")
+    dest_zip = ""
     try:
         dest_root = ensure_temp_download_dir()
         dest_zip = os.path.join(dest_root, f"fix_{appid}.zip")
@@ -120,7 +121,8 @@ async def _download_and_extract_fix(appid: int, download_url: str, install_path:
     except Exception as exc:
         if str(exc) == "cancelled":
             try:
-                os.remove(dest_zip)
+                if dest_zip:
+                    os.remove(dest_zip)
             except Exception:
                 pass
             _set_fix_download_state(appid, {"status": "cancelled", "success": False, "error": "Cancelled by user"})
@@ -269,7 +271,7 @@ def cancel_apply_fix(appid: int) -> dict:
     return {"success": True}
 
 
-def _unfix_game_worker(appid: int, install_path: str, fix_date: str = None) -> None:
+def _unfix_game_worker(appid: int, install_path: str, fix_date: str = "") -> None:
     """Synchronous un-fix worker (runs in executor)."""
     try:
         log_file_path = os.path.join(install_path, f"luatools-fix-log-{appid}.log")
@@ -303,9 +305,9 @@ def _unfix_game_worker(appid: int, install_path: str, fix_date: str = None) -> N
                     if line_stripped == "Files:":
                         in_files_section = True
                     elif in_files_section and line_stripped:
-                        if fix_date is None or (block_date and block_date == fix_date):
+                        if not fix_date or (block_date and block_date == fix_date):
                             files_to_delete.add(line_stripped)
-                if fix_date is not None and block_date and block_date != fix_date:
+                if fix_date and block_date and block_date != fix_date:
                     remaining_fixes.append("[FIX]\n" + "\n".join(block_lines) + "\n[/FIX]")
         else:
             lines = log_content.split("\n")
@@ -363,7 +365,7 @@ async def unfix_game(appid: int, install_path: str = "", fix_date: str = "") -> 
 
     _set_unfix_state(appid, {"status": "queued", "progress": "", "error": None})
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _unfix_game_worker, appid, resolved_path, fix_date or None)
+    loop.run_in_executor(None, _unfix_game_worker, appid, resolved_path, fix_date or "")
     return {"success": True}
 
 

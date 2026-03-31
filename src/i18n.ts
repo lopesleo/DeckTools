@@ -217,6 +217,15 @@ const strings: Record<Lang, Record<string, string>> = {
     toastDownloadFailed: "Download failed",
     uninstallWarnings: "Uninstalled (with warnings: {0})",
 
+    // Storage / Library selection
+    storageLibrary: "Storage Library",
+    selectLibrary: "Select Library",
+    steamLibraries: "Steam Libraries",
+    freeSpace: "Free: {0}",
+    libraryGames: "{0} games",
+    defaultLibrary: "Default",
+    downloadTo: "Download to: {0}",
+
     // Search
     noGamesFound: "No games found",
     searchFailed: "Search failed",
@@ -430,6 +439,15 @@ const strings: Record<Lang, Record<string, string>> = {
     toastDownloadComplete: "Download concluído!",
     toastDownloadFailed: "Download falhou",
     uninstallWarnings: "Desinstalado (com avisos: {0})",
+
+    // Storage / Library selection
+    storageLibrary: "Biblioteca de Armazenamento",
+    selectLibrary: "Selecionar Biblioteca",
+    steamLibraries: "Bibliotecas Steam",
+    freeSpace: "Livre: {0}",
+    libraryGames: "{0} jogos",
+    defaultLibrary: "Padrão",
+    downloadTo: "Baixar em: {0}",
 
     // Search
     noGamesFound: "Nenhum jogo encontrado",

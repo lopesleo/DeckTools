@@ -46,6 +46,7 @@ import {
   getGenerateStatus,
   downloadSlscheevo,
   getSlscheevoDownloadStatus,
+  getSteamLibraries,
 } from "../api";
 import { useT } from "../i18n";
 
@@ -98,6 +99,8 @@ export function GameDetail({ appid }: GameDetailProps) {
   const [achievementGenState, setAchievementGenState] = useState<any>(null);
   const [slscheevoBinaryPath, setSlscheevoBinaryPath] = useState("");
   const [busy, setBusy] = useState("");
+  const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
+  const [selectedLibrary, setSelectedLibrary] = useState("");
 
   const toast = (title: string, body?: string, duration = 3000) =>
     toaster.toast({ title, body: body || gameName, duration });
@@ -164,6 +167,11 @@ export function GameDetail({ appid }: GameDetailProps) {
       if (achResult.success) {
         setAchievementStatus(achResult.status);
         if (achResult.binaryPath) setSlscheevoBinaryPath(achResult.binaryPath);
+      }
+
+      const libResult = await getSteamLibraries();
+      if (libResult.success && libResult.libraries) {
+        setSteamLibraries(libResult.libraries);
       }
     };
     load();
@@ -235,7 +243,7 @@ export function GameDetail({ appid }: GameDetailProps) {
   }, [achievementStatus, appid]);
 
   const handleDownload = async () => {
-    const result = await startDownload(appid);
+    const result = await startDownload(appid, selectedLibrary);
     if (result.success) {
       setDownloadState({ status: "queued", bytesRead: 0, totalBytes: 0 });
       toast(t("toastDownloadStarted"), gameName, 2000);
@@ -589,6 +597,34 @@ export function GameDetail({ appid }: GameDetailProps) {
 
       {/* Download section */}
       <PanelSection title={t("download")}>
+        {steamLibraries.length > 1 && !isDownloading && (
+          <>
+            <PanelSectionRow>
+              <div style={{ fontSize: "12px", color: "#dcdedf" }}>
+                {t("selectLibrary")}
+              </div>
+            </PanelSectionRow>
+            {steamLibraries.map((lib: any, idx: number) => {
+              const isSelected = selectedLibrary === lib.path || (!selectedLibrary && idx === 0);
+              const freeGB = (lib.freeBytes / (1024 * 1024 * 1024)).toFixed(1);
+              const shortPath = lib.path.split("/").slice(-2).join("/");
+              return (
+                <PanelSectionRow key={lib.path}>
+                  <ButtonItem
+                    layout="below"
+                    onClick={() => setSelectedLibrary(lib.path)}
+                    description={`${t("freeSpace", `${freeGB} GB`)} — ${t("libraryGames", lib.gameCount)}`}
+                  >
+                    <span style={{ color: isSelected ? "#1a9fff" : "#dcdedf" }}>
+                      {isSelected ? "● " : "○ "}
+                      {shortPath} {idx === 0 ? `(${t("defaultLibrary")})` : ""}
+                    </span>
+                  </ButtonItem>
+                </PanelSectionRow>
+              );
+            })}
+          </>
+        )}
         {isDownloading ? (
           <>
             <PanelSectionRow>

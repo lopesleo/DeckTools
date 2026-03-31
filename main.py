@@ -126,11 +126,11 @@ class Plugin:
     # Downloads
     # ==========================================================================
 
-    async def start_download(self, appid: int) -> str:
-        logger.info(f"DeckTools: start_download called, appid={appid}")
+    async def start_download(self, appid: int, target_library_path: str = "") -> str:
+        logger.info(f"DeckTools: start_download called, appid={appid}, library={target_library_path or '(default)'}")
         try:
             from downloads import start_download
-            result = await start_download(appid)
+            result = await start_download(appid, target_library_path)
             logger.info(f"DeckTools: start_download result={result}")
             return _j(result)
         except Exception as exc:
@@ -197,6 +197,10 @@ class Plugin:
     async def get_installed_games(self) -> str:
         from steam_utils import get_installed_games
         return _j({"success": True, "games": get_installed_games()})
+
+    async def get_steam_libraries(self) -> str:
+        from steam_utils import get_steam_libraries
+        return _j({"success": True, "libraries": get_steam_libraries()})
 
     # ==========================================================================
     # SLSsteam Config (read/write)
@@ -363,9 +367,9 @@ class Plugin:
     # Workshop
     # ==========================================================================
 
-    async def start_workshop_download(self, appid: int, pubfile_id: int) -> str:
+    async def start_workshop_download(self, appid: int, pubfile_id: int, target_library_path: str = "") -> str:
         from workshop import start_workshop_download
-        return _j(await start_workshop_download(appid, pubfile_id))
+        return _j(await start_workshop_download(appid, pubfile_id, target_library_path))
 
     async def get_workshop_download_status(self) -> str:
         from workshop import get_workshop_download_status

@@ -44,8 +44,8 @@ export const checkGameUpdate = async (appid: number) =>
   parseResult(await call<[number], string>("check_game_update", appid));
 
 // Downloads
-export const startDownload = async (appid: number) =>
-  parseResult(await call<[number], string>("start_download", appid));
+export const startDownload = async (appid: number, targetLibraryPath: string = "") =>
+  parseResult(await call<[number, string], string>("start_download", appid, targetLibraryPath));
 
 export const getDownloadStatus = async (appid: number) =>
   parseResult(await call<[number], string>("get_download_status", appid));
@@ -71,6 +71,9 @@ export const fetchAppName = async (appid: number) =>
 // Steam Utils
 export const getGameInstallPath = async (appid: number) =>
   parseResult(await call<[number], string>("get_game_install_path", appid));
+
+export const getSteamLibraries = async () =>
+  parseResult(await call<[], string>("get_steam_libraries"));
 
 // SLSsteam Operations
 export const addFakeAppId = async (appid: number, fakeId: number = 480) =>
@@ -218,12 +221,13 @@ export const applyLinuxNativeFix = async (installPath: string) =>
   );
 
 // Workshop
-export const startWorkshopDownload = async (appid: number, pubfileId: number) =>
+export const startWorkshopDownload = async (appid: number, pubfileId: number, targetLibraryPath: string = "") =>
   parseResult(
-    await call<[number, number], string>(
+    await call<[number, number, string], string>(
       "start_workshop_download",
       appid,
       pubfileId,
+      targetLibraryPath,
     ),
   );
 

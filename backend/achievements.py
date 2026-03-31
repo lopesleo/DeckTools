@@ -155,11 +155,12 @@ async def _run_slscheevo(appid: int) -> None:
                 os.makedirs(os.path.dirname(template_path), exist_ok=True)
                 tmpl_resp = await client.get(SLSCHEEVO_TEMPLATE_URL, follow_redirects=True, timeout=15)
                 tmpl_resp.raise_for_status()
+                tmpl_data: bytes = tmpl_resp.content  # type: ignore[attr-defined]
                 with open(template_path, "wb") as f:
-                    f.write(tmpl_resp.content)
+                    f.write(tmpl_data)
                 import subprocess
                 subprocess.run(["chown", "deck:deck", template_path], timeout=5, capture_output=True)
-                logger.info(f"DeckTools: Downloaded missing template ({len(tmpl_resp.content)} bytes)")
+                logger.info(f"DeckTools: Downloaded missing template ({len(tmpl_data)} bytes)")
             except Exception as exc:
                 logger.warning(f"DeckTools: Failed to download template: {exc}")
 
@@ -193,6 +194,7 @@ async def _run_slscheevo(appid: int) -> None:
         )
 
         last_line = ""
+        assert process.stdout is not None
         while True:
             line = await process.stdout.readline()
             if not line:
@@ -206,7 +208,7 @@ async def _run_slscheevo(appid: int) -> None:
         await process.wait()
         rc = process.returncode
 
-        logger.info(f"DeckTools: SLScheevo exit code: {rc} ({_EXIT_CODES.get(rc, 'unknown')})")
+        logger.info(f"DeckTools: SLScheevo exit code: {rc} ({_EXIT_CODES.get(rc or -1, 'unknown')})")
 
         if rc == 0:
             stats_dir = get_steam_appcache_stats_dir()
@@ -226,7 +228,7 @@ async def _run_slscheevo(appid: int) -> None:
                 "error": None,
             }
         else:
-            error_msg = _EXIT_CODES.get(rc, f"Unknown error (exit code {rc})")
+            error_msg = _EXIT_CODES.get(rc or -1, f"Unknown error (exit code {rc})")
             if last_line:
                 error_msg = f"{error_msg}: {last_line}"
             ACHIEVEMENT_STATE[appid] = {"status": "error", "error": error_msg}
@@ -429,9 +431,10 @@ async def _download_slscheevo_binary() -> None:
             try:
                 tmpl_resp = await client.get(SLSCHEEVO_TEMPLATE_URL, follow_redirects=True, timeout=15)
                 tmpl_resp.raise_for_status()
+                tmpl_data2: bytes = tmpl_resp.content  # type: ignore[attr-defined]
                 with open(template_path, "wb") as f:
-                    f.write(tmpl_resp.content)
-                logger.info(f"DeckTools: Downloaded UserGameStats_TEMPLATE.bin ({len(tmpl_resp.content)} bytes)")
+                    f.write(tmpl_data2)
+                logger.info(f"DeckTools: Downloaded UserGameStats_TEMPLATE.bin ({len(tmpl_data2)} bytes)")
             except Exception as tmpl_exc:
                 logger.warning(f"DeckTools: Failed to download template: {tmpl_exc}")
 

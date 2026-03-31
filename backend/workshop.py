@@ -165,7 +165,7 @@ async def _run_depot_downloader_workshop(appid: str, pubfile_id: str, download_d
         _workshop_process = None
 
 
-async def start_workshop_download(appid: int, pubfile_id: int) -> dict:
+async def start_workshop_download(appid: int, pubfile_id: int, target_library_path: str = "") -> dict:
     global workshop_state
     if workshop_state["status"] == "downloading":
         return {"success": False, "error": "Download already in progress."}
@@ -174,7 +174,9 @@ async def start_workshop_download(appid: int, pubfile_id: int) -> dict:
     if not steam_root:
         return {"success": False, "error": "Steam installation not found."}
 
-    download_dir = os.path.join(steam_root, "steamapps", "workshop", "content", str(appid), str(pubfile_id))
+    # Use target library if specified, otherwise default to primary Steam root
+    library_base = target_library_path if target_library_path and os.path.isdir(target_library_path) else steam_root
+    download_dir = os.path.join(library_base, "steamapps", "workshop", "content", str(appid), str(pubfile_id))
     os.makedirs(download_dir, exist_ok=True)
 
     workshop_state = {

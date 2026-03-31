@@ -452,15 +452,19 @@ async def _fetch_installdir_from_api(appid: int) -> str:
     return ""
 
 
-async def _determine_install_dir(appid: int, game_name: str) -> str:
+async def _determine_install_dir(appid: int, game_name: str, target_library_path: str = "") -> str:
     """Determine the directory to download game files into (like ACCELA).
 
     Priority: Steam API installdir > existing directory on disk > ACF > game name.
+    If target_library_path is given, use that library instead of the primary one.
     """
     steam_path = detect_steam_install_path()
     if not steam_path:
         steam_path = "/home/deck/.local/share/Steam"
-    common_path = os.path.join(steam_path, "steamapps", "common")
+
+    # Use target library if specified, otherwise default to primary Steam path
+    library_base = target_library_path if target_library_path and os.path.isdir(target_library_path) else steam_path
+    common_path = os.path.join(library_base, "steamapps", "common")
 
     # 1. Try Steam API for official installdir (like ACCELA's steam_api.py)
     api_installdir = await _fetch_installdir_from_api(appid)
@@ -1227,7 +1231,7 @@ def _chmod_linux_binaries(install_dir: str) -> None:
         logger.info(f"DeckTools: Set executable permissions on {chmod_count} files in {install_dir}")
 
 
-def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dict], game_name: str = "") -> None:
+def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dict], game_name: str = "", target_library_path: str = "") -> None:
     """Create or overwrite the appmanifest ACF (matching ACCELA's _create_acf_file exactly).
 
     Key differences from previous version:
@@ -1235,9 +1239,12 @@ def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dic
     - Adds platform_override for Windows depots on Linux
     - Calls chmod on Linux binaries
     - Triggers Steam restart
+
+    If target_library_path is given, the ACF is written to that library's steamapps/.
     """
     steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
-    acf_path = os.path.join(steam_path, "steamapps", f"appmanifest_{appid}.acf")
+    library_base = target_library_path if target_library_path and os.path.isdir(target_library_path) else steam_path
+    acf_path = os.path.join(library_base, "steamapps", f"appmanifest_{appid}.acf")
 
     # Derive installdir from actual download directory basename
     install_folder_name = os.path.basename(install_dir.rstrip("/\\"))
@@ -1415,7 +1422,7 @@ async def repair_appmanifest(appid: int) -> dict:
 # Main download flow (async)
 # ---------------------------------------------------------------------------
 
-async def _download_zip_for_app(appid: int) -> None:
+async def _download_zip_for_app(appid: int, target_library_path: str = "") -> None:
     """Download manifest zip from enabled APIs and install."""
     client = await ensure_http_client("download")
     apis = load_api_manifest()
@@ -1557,7 +1564,7 @@ async def _download_zip_for_app(appid: int) -> None:
 
                         depots = _parse_lua_depots(lua_path) if os.path.exists(lua_path) else []
                         if depots:
-                            install_dir = await _determine_install_dir(appid, fetched_name)
+                            install_dir = await _determine_install_dir(appid, fetched_name, target_library_path)
                             logger.info(f"DeckTools: Starting depot download - {len(depots)} depot(s) -> {install_dir}")
                             await _run_depot_download(appid, depots, install_dir)
 
@@ -1571,7 +1578,7 @@ async def _download_zip_for_app(appid: int) -> None:
 
                             # Create/overwrite appmanifest so Steam recognizes the game as installed
                             try:
-                                _create_or_update_appmanifest(appid, install_dir, depots, fetched_name)
+                                _create_or_update_appmanifest(appid, install_dir, depots, fetched_name, target_library_path)
                             except Exception as acf_exc:
                                 logger.warning(f"DeckTools: appmanifest update error: {acf_exc}")
                         else:
@@ -1628,15 +1635,15 @@ async def _download_zip_for_app(appid: int) -> None:
     _set_download_state(appid, {"status": "failed", "error": "Not available on any API"})
 
 
-async def start_download(appid: int) -> dict:
+async def start_download(appid: int, target_library_path: str = "") -> dict:
     try:
         appid = int(appid)
     except Exception:
         return {"success": False, "error": "Invalid appid"}
 
-    logger.info(f"DeckTools: start_download appid={appid}")
+    logger.info(f"DeckTools: start_download appid={appid} library={target_library_path or '(default)'}")
     _set_download_state(appid, {"status": "queued", "bytesRead": 0, "totalBytes": 0})
-    task = asyncio.create_task(_download_zip_for_app(appid))
+    task = asyncio.create_task(_download_zip_for_app(appid, target_library_path))
     DOWNLOAD_TASKS[appid] = task
     return {"success": True}
 

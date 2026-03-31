@@ -239,6 +239,59 @@ def get_installed_games() -> list:
     return games
 
 
+def get_steam_libraries() -> list:
+    """Return all Steam library folders with free space info.
+
+    Each entry: {"path": str, "freeBytes": int, "totalBytes": int, "gameCount": int}
+    """
+    steam_path = detect_steam_install_path()
+    if not steam_path:
+        return []
+
+    library_vdf_path = os.path.join(steam_path, "config", "libraryfolders.vdf")
+    if not os.path.exists(library_vdf_path):
+        return []
+
+    try:
+        with open(library_vdf_path, "r", encoding="utf-8") as handle:
+            vdf_content = handle.read()
+        library_data = _parse_vdf_simple(vdf_content)
+    except Exception:
+        return []
+
+    library_folders = library_data.get("libraryfolders", {})
+    libraries = []
+
+    for folder_data in library_folders.values():
+        if not isinstance(folder_data, dict):
+            continue
+        folder_path = folder_data.get("path", "")
+        if not folder_path:
+            continue
+        folder_path = folder_path.replace("\\\\", "\\")
+
+        apps = folder_data.get("apps", {})
+        game_count = len(apps) if isinstance(apps, dict) else 0
+
+        free_bytes = 0
+        total_bytes = 0
+        try:
+            st = os.statvfs(folder_path)
+            free_bytes = st.f_bavail * st.f_frsize
+            total_bytes = st.f_blocks * st.f_frsize
+        except Exception:
+            pass
+
+        libraries.append({
+            "path": folder_path,
+            "freeBytes": free_bytes,
+            "totalBytes": total_bytes,
+            "gameCount": game_count,
+        })
+
+    return libraries
+
+
 def open_game_folder(path: str) -> bool:
     try:
         if not path or not os.path.exists(path):
