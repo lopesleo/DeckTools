@@ -1321,8 +1321,24 @@ def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dic
 
     size_on_disk = _get_dir_size(install_dir)
 
-    # InstalledDepots — ACCELA leaves it empty on Linux (line 770 in task_manager.py)
-    installed_depots_str = '\t"InstalledDepots"\n\t{\n\t}'
+    # InstalledDepots — populate with actual depot/manifest info so Steam
+    # does not flag the installation as needing re-verification (UpdateResult 8).
+    # An empty InstalledDepots causes Steam to set StateFlags 36 + UpdateResult 8
+    # ("content still encrypted") on next startup.
+    depot_entries = ""
+    for d in depots:
+        depot_id = d.get("depot", "")
+        manifest_id = d.get("manifest", "")
+        size = d.get("size", 0)
+        if depot_id and manifest_id:
+            depot_entries += (
+                f'\t\t"{depot_id}"\n'
+                f'\t\t{{\n'
+                f'\t\t\t"manifest"\t\t"{manifest_id}"\n'
+                f'\t\t\t"size"\t\t"{size}"\n'
+                f'\t\t}}\n'
+            )
+    installed_depots_str = f'\t"InstalledDepots"\n\t{{\n{depot_entries}\t}}'
 
     # Platform config — detect if game has Windows .exe files (needs Proton override)
     # Like ACCELA: Windows depots on Linux get platform_override; native Linux gets empty config
