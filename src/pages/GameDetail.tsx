@@ -101,6 +101,7 @@ export function GameDetail({ appid }: GameDetailProps) {
   const [busy, setBusy] = useState("");
   const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
   const [selectedLibrary, setSelectedLibrary] = useState("");
+  const [pickingLibrary, setPickingLibrary] = useState(false);
 
   const toast = (title: string, body?: string, duration = 3000) =>
     toaster.toast({ title, body: body || gameName, duration });
@@ -243,6 +244,12 @@ export function GameDetail({ appid }: GameDetailProps) {
   }, [achievementStatus, appid]);
 
   const handleDownload = async () => {
+    // If game not yet installed and multiple libraries exist, show picker first
+    if (!installPath && steamLibraries.length > 1 && !pickingLibrary) {
+      setPickingLibrary(true);
+      return;
+    }
+    setPickingLibrary(false);
     const result = await startDownload(appid, selectedLibrary);
     if (result.success) {
       setDownloadState({ status: "queued", bytesRead: 0, totalBytes: 0 });
@@ -597,10 +604,10 @@ export function GameDetail({ appid }: GameDetailProps) {
 
       {/* Download section */}
       <PanelSection title={t("download")}>
-        {steamLibraries.length > 1 && !installPath && !isDownloading && (
+        {pickingLibrary ? (
           <>
             <PanelSectionRow>
-              <div style={{ fontSize: "12px", color: "#8b929a" }}>
+              <div style={{ fontSize: "12px", color: "#dcdedf" }}>
                 {t("selectLibrary")}
               </div>
             </PanelSectionRow>
@@ -623,9 +630,17 @@ export function GameDetail({ appid }: GameDetailProps) {
                 </PanelSectionRow>
               );
             })}
+            <ActionButton
+              label={t("downloadManifest")}
+              onClick={handleDownload}
+              variant="primary"
+            />
+            <ActionButton
+              label={t("cancel")}
+              onClick={() => setPickingLibrary(false)}
+            />
           </>
-        )}
-        {isDownloading ? (
+        ) : isDownloading ? (
           <>
             <PanelSectionRow>
               <div style={{ fontSize: "12px", color: "#dcdedf" }}>
