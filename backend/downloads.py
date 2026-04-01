@@ -946,6 +946,56 @@ def _parse_lua_depots(lua_path: str) -> list[dict]:
     return depots
 
 
+def _flatten_ddm_subdir(install_dir: str) -> None:
+    """Flatten a single subdirectory created by DDM inside install_dir.
+
+    DDM sometimes downloads Windows depots on Linux into a subdirectory
+    named like "GameName_windows/" instead of directly into install_dir.
+    If install_dir contains exactly one real subdirectory (ignoring
+    .DepotDownloader), move its contents up and remove it.
+    """
+    import shutil
+
+    _IGNORED = {".depotdownloader"}
+
+    try:
+        entries = os.listdir(install_dir)
+    except Exception:
+        return
+
+    # Separate real subdirs from files/ignored dirs
+    real_subdirs = [
+        e for e in entries
+        if os.path.isdir(os.path.join(install_dir, e))
+        and e.lower() not in _IGNORED
+    ]
+    real_files = [
+        e for e in entries
+        if os.path.isfile(os.path.join(install_dir, e))
+    ]
+
+    # Only flatten when there is exactly one subdir and no loose files
+    if len(real_subdirs) != 1 or real_files:
+        return
+
+    subdir_path = os.path.join(install_dir, real_subdirs[0])
+    logger.info(f"DeckTools: DDM subdir detected: {subdir_path} — flattening into {install_dir}")
+
+    try:
+        for item in os.listdir(subdir_path):
+            src = os.path.join(subdir_path, item)
+            dst = os.path.join(install_dir, item)
+            if os.path.exists(dst):
+                # Destination already exists — skip to avoid overwriting
+                logger.warning(f"DeckTools: flatten skip (already exists): {dst}")
+                continue
+            shutil.move(src, dst)
+        os.rmdir(subdir_path)
+        logger.info(f"DeckTools: Flattened subdir '{real_subdirs[0]}' into {install_dir}")
+    except Exception as exc:
+        logger.warning(f"DeckTools: Failed to flatten DDM subdir: {exc}")
+
+
 async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) -> None:
     """Run DepotDownloaderMod to download actual game files."""
     import tempfile
@@ -1153,6 +1203,11 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
         pass
 
     logger.info(f"DeckTools: All depots downloaded for {appid} -> {install_dir}")
+
+    # Flatten subdirectory created by DDM for Windows depots on Linux.
+    # DDM sometimes places files inside a subdirectory (e.g. "GameName_windows/")
+    # instead of directly in install_dir. Detect and move files up one level.
+    _flatten_ddm_subdir(install_dir)
 
     # Fix file ownership: Decky runs as root but Steam runs as deck user
     try:
