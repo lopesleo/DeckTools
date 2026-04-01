@@ -597,10 +597,10 @@ export function GameDetail({ appid }: GameDetailProps) {
 
       {/* Download section */}
       <PanelSection title={t("download")}>
-        {steamLibraries.length > 1 && !isDownloading && (
+        {steamLibraries.length > 1 && !installPath && !isDownloading && (
           <>
             <PanelSectionRow>
-              <div style={{ fontSize: "12px", color: "#dcdedf" }}>
+              <div style={{ fontSize: "12px", color: "#8b929a" }}>
                 {t("selectLibrary")}
               </div>
             </PanelSectionRow>
