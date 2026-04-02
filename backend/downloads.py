@@ -312,7 +312,89 @@ def _zip_basename(name: str) -> str:
     return name.replace("\\", "/").split("/")[-1]
 
 
-def _process_and_install_lua(appid: int, zip_path: str) -> None:
+async def _enrich_lua_with_linux_depot(appid: int, lua_text: str) -> tuple[str, bool]:
+    """Add Linux depot to lua if the manifest is already in the local depotcache.
+
+    Returns (lua_text, has_linux_depot). Only adds the depot if the manifest
+    binary was already extracted from the zip — avoids 401 errors trying to
+    fetch manifests anonymously from Steam CDN.
+    """
+    try:
+        for m in re.finditer(r'addappid\(\s*(\d+)\s*,\s*\d+\s*,', lua_text):
+            _ = m.group(1)  # windows depot present
+
+        if not re.search(r'addappid\(\s*\d+\s*,\s*\d+\s*,', lua_text):
+            return lua_text, False  # No depots to work with
+
+        steam_path = detect_steam_install_path()
+        depotcache_dir = os.path.join(steam_path or "", "depotcache")
+
+        try:
+            client = await ensure_http_client("EnrichLua")
+            resp = await client.get(f"https://api.steamcmd.net/v1/info/{appid}", timeout=10)
+            if resp.status_code != 200:
+                return lua_text, False
+
+            data = resp.json()
+            if data.get("status") != "success":
+                return lua_text, False
+
+            app_depots = data.get("data", {}).get(str(appid), {}).get("depots", {})
+
+            linux_depot_id = None
+            linux_manifest = None
+            linux_size = None
+
+            for depot_id, depot_info in app_depots.items():
+                if not depot_id.isdigit():
+                    continue
+                config = depot_info.get("config", {})
+                if config.get("oslist") == "linux" and config.get("osarch") == "64":
+                    linux_depot_id = depot_id
+                    public = depot_info.get("manifests", {}).get("public", {})
+                    if isinstance(public, dict):
+                        linux_manifest = public.get("gid")
+                        linux_size = public.get("size", 0)
+                    break
+
+            if not linux_depot_id or not linux_manifest:
+                return lua_text, False
+
+            # Only add the Linux depot if the manifest binary is already in depotcache
+            # (placed there when the API zip contained it). Without it, DDM gets 401.
+            manifest_file = os.path.join(depotcache_dir, f"{linux_depot_id}_{linux_manifest}.manifest")
+            if not os.path.exists(manifest_file):
+                logger.info(
+                    f"DeckTools: Linux depot {linux_depot_id} found for {appid} "
+                    f"but manifest {linux_manifest} not in depotcache — skipping enrichment"
+                )
+                return lua_text, False
+
+            windows_token = None
+            for m in re.finditer(r'addappid\(\s*(\d+)\s*,\s*\d+\s*,\s*"([^"]+)"', lua_text):
+                windows_token = m.group(2)
+                if windows_token:
+                    break
+
+            if not windows_token:
+                return lua_text, False
+
+            linux_line = f'addappid({linux_depot_id},1,"{windows_token}")\n'
+            linux_manifest_line = f'--setManifestid({linux_depot_id},"{linux_manifest}",{linux_size})\n'
+            lua_text = lua_text.rstrip() + "\n" + linux_line + linux_manifest_line
+            logger.info(f"DeckTools: Added Linux depot {linux_depot_id} (manifest in depotcache) for {appid}")
+            return lua_text, True
+
+        except Exception as exc:
+            logger.warning(f"DeckTools: Failed to enrich lua with Linux depot: {exc}")
+            return lua_text, False
+
+    except Exception as exc:
+        logger.warning(f"DeckTools: Error in _enrich_lua_with_linux_depot: {exc}")
+        return lua_text, False
+
+
+async def _process_and_install_lua(appid: int, zip_path: str) -> None:
     """Process downloaded zip: extract manifests and lua files."""
     import zipfile
 
@@ -393,12 +475,25 @@ def _process_and_install_lua(appid: int, zip_path: str) -> None:
         except Exception:
             text = data.decode("utf-8", errors="replace")
 
+        # Comment out setManifestid() calls to prevent Steam from locking
+        # manifest versions and showing an "Update" button (LuaToolsLinux approach)
+        processed_lines = []
+        for line in text.splitlines(True):
+            if re.match(r"^\s*setManifestid\(", line) and not re.match(r"^\s*--", line):
+                line = re.sub(r"^(\s*)", r"\1--", line)
+            processed_lines.append(line)
+        processed_text = "".join(processed_lines)
+
+        # Enrich lua with missing Linux depot if manifest is already in depotcache
+        processed_text, has_linux_depot = await _enrich_lua_with_linux_depot(appid, processed_text)
+        _set_download_state(appid, {"hasLinuxDepot": has_linux_depot})
+
         _set_download_state(appid, {"status": "installing"})
         dest_file = os.path.join(target_dir, f"{appid}.lua")
         if _is_download_cancelled(appid):
             raise RuntimeError("cancelled")
         with open(dest_file, "w", encoding="utf-8") as output:
-            output.write(text)
+            output.write(processed_text)
         logger.info(f"DeckTools: Installed lua -> {dest_file}")
         _set_download_state(appid, {"installedPath": dest_file})
 
@@ -936,7 +1031,9 @@ def _parse_lua_depots(lua_path: str) -> list[dict]:
         manifest_map[depot_id]["token"] = token
 
     # Parse setManifestid(depotid, "manifestid", ...) calls
-    for m in re.finditer(r'setManifestid\(\s*(\d+)\s*,\s*"(\d+)"', content):
+    # Also match commented-out lines (--setManifestid) since _process_and_install_lua
+    # comments them out to prevent Steam from showing an update button
+    for m in re.finditer(r'(?:--\s*)?setManifestid\(\s*(\d+)\s*,\s*"(\d+)"', content):
         depot_id = int(m.group(1))
         manifest_id = m.group(2)
         manifest_map.setdefault(depot_id, {})["depot"] = depot_id
@@ -944,56 +1041,6 @@ def _parse_lua_depots(lua_path: str) -> list[dict]:
 
     depots = [v for v in manifest_map.values() if "depot" in v and "manifest" in v]
     return depots
-
-
-def _flatten_ddm_subdir(install_dir: str) -> None:
-    """Flatten a single subdirectory created by DDM inside install_dir.
-
-    DDM sometimes downloads Windows depots on Linux into a subdirectory
-    named like "GameName_windows/" instead of directly into install_dir.
-    If install_dir contains exactly one real subdirectory (ignoring
-    .DepotDownloader), move its contents up and remove it.
-    """
-    import shutil
-
-    _IGNORED = {".depotdownloader"}
-
-    try:
-        entries = os.listdir(install_dir)
-    except Exception:
-        return
-
-    # Separate real subdirs from files/ignored dirs
-    real_subdirs = [
-        e for e in entries
-        if os.path.isdir(os.path.join(install_dir, e))
-        and e.lower() not in _IGNORED
-    ]
-    real_files = [
-        e for e in entries
-        if os.path.isfile(os.path.join(install_dir, e))
-    ]
-
-    # Only flatten when there is exactly one subdir and no loose files
-    if len(real_subdirs) != 1 or real_files:
-        return
-
-    subdir_path = os.path.join(install_dir, real_subdirs[0])
-    logger.info(f"DeckTools: DDM subdir detected: {subdir_path} — flattening into {install_dir}")
-
-    try:
-        for item in os.listdir(subdir_path):
-            src = os.path.join(subdir_path, item)
-            dst = os.path.join(install_dir, item)
-            if os.path.exists(dst):
-                # Destination already exists — skip to avoid overwriting
-                logger.warning(f"DeckTools: flatten skip (already exists): {dst}")
-                continue
-            shutil.move(src, dst)
-        os.rmdir(subdir_path)
-        logger.info(f"DeckTools: Flattened subdir '{real_subdirs[0]}' into {install_dir}")
-    except Exception as exc:
-        logger.warning(f"DeckTools: Failed to flatten DDM subdir: {exc}")
 
 
 async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) -> None:
@@ -1058,6 +1105,12 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
     _DEPOT_MAX_RETRIES = 3
     _DEPOT_RETRY_DELAYS = [5, 15, 30]
     _AUTH_ERROR_MARKERS = ("access denied", "manifest not available", "no subscription", "purchase")
+    _MANIFEST_UNAVAILABLE_MARKERS = (
+        "no manifest request code",
+        "unable to download manifest",
+        "encountered 401",
+        "manifest 401",
+    )
 
     for idx, depot_info in enumerate(depots):
         depot_id = depot_info["depot"]
@@ -1068,6 +1121,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
         # Find the manifest file in depotcache
         manifest_file = os.path.join(depotcache_dir, f"{depot_id}_{manifest_id}.manifest")
+        has_local_manifest = os.path.exists(manifest_file)
 
         cmd = cmd_prefix + [
             "-app", str(appid),
@@ -1158,8 +1212,16 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
                 full_log = "\n".join(depot_output)
                 auth_error = any(x in full_log for x in _AUTH_ERROR_MARKERS)
+                manifest_unavailable = any(x in full_log for x in _MANIFEST_UNAVAILABLE_MARKERS)
 
-                if auth_error:
+                if auth_error or manifest_unavailable:
+                    if not has_local_manifest:
+                        # Enriched depot (added from SteamCMD, no local manifest) — non-fatal
+                        logger.warning(
+                            f"DeckTools: Depot {depot_id} skipped — manifest not available anonymously "
+                            f"(enriched depot, game will run via Proton)"
+                        )
+                        break  # skip this depot, continue with others
                     error_msg = f"Access denied for depot {depot_id} (auth required)"
                     logger.warning(f"DeckTools: {error_msg} — not retrying")
                     _set_download_state(appid, {"status": "failed", "error": f"Depot {depot_id} failed: {error_msg}"})
@@ -1170,6 +1232,10 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
                     logger.warning(f"DeckTools: Depot {depot_id} failed (attempt {attempt+1}): {error_msg}")
                     if attempt < _DEPOT_MAX_RETRIES - 1:
                         continue  # retry
+                    if not has_local_manifest:
+                        # Enriched depot without local manifest — non-fatal
+                        logger.warning(f"DeckTools: Depot {depot_id} skipped after {_DEPOT_MAX_RETRIES} attempts (enriched, non-fatal)")
+                        break
                     _set_download_state(appid, {
                         "status": "failed",
                         "error": f"Depot {depot_id} failed after {_DEPOT_MAX_RETRIES} attempts: {error_msg}",
@@ -1204,10 +1270,8 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
     logger.info(f"DeckTools: All depots downloaded for {appid} -> {install_dir}")
 
-    # Flatten subdirectory created by DDM for Windows depots on Linux.
-    # DDM sometimes places files inside a subdirectory (e.g. "GameName_windows/")
-    # instead of directly in install_dir. Detect and move files up one level.
-    _flatten_ddm_subdir(install_dir)
+    # NOTE: DDM creates subdirectories like "GameName_windows/" — do NOT flatten them.
+    # Steam's launch config expects executables inside those subdirectories.
 
     # Fix file ownership: Decky runs as root but Steam runs as deck user
     try:
@@ -1321,10 +1385,25 @@ def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dic
 
     size_on_disk = _get_dir_size(install_dir)
 
-    # InstalledDepots — populate with actual depot/manifest info so Steam
-    # does not flag the installation as needing re-verification (UpdateResult 8).
-    # An empty InstalledDepots causes Steam to set StateFlags 36 + UpdateResult 8
-    # ("content still encrypted") on next startup.
+    # Fetch real buildid from SteamCMD API so Steam doesn't show "Update" button.
+    # buildid=0 causes Steam to detect a version mismatch and set StateFlags 6.
+    buildid = "0"
+    try:
+        import httpx
+        resp = httpx.get(f"https://api.steamcmd.net/v1/info/{appid}", timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("status") == "success":
+                bid = data.get("data", {}).get(str(appid), {}).get("depots", {}).get("branches", {}).get("public", {}).get("buildid")
+                if bid:
+                    buildid = str(bid)
+                    logger.info(f"DeckTools: Fetched buildid {buildid} for {appid}")
+    except Exception as exc:
+        logger.warning(f"DeckTools: Failed to fetch buildid for {appid}: {exc}")
+
+    # InstalledDepots — populate with real depot/manifest data.
+    # Empty causes UpdateResult 8 ("content still encrypted").
+    # Steam rewriting StateFlags to 6 is blocked by making the ACF read-only.
     depot_entries = ""
     for d in depots:
         depot_id = d.get("depot", "")
@@ -1340,17 +1419,20 @@ def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dic
             )
     installed_depots_str = f'\t"InstalledDepots"\n\t{{\n{depot_entries}\t}}'
 
-    # Platform config — detect if game has Windows .exe files (needs Proton override)
-    # Like ACCELA: Windows depots on Linux get platform_override; native Linux gets empty config
+    # Platform config — detect if game has Windows .exe files (needs Proton override).
+    # DDM places files in subdirs like "GameName_windows/", so we walk recursively.
     has_exe = False
     has_linux_binary = False
     if os.path.isdir(install_dir):
-        for fname in os.listdir(install_dir):
-            fl = fname.lower()
-            if fl.endswith(".exe"):
-                has_exe = True
-            if fl.endswith(".sh") or fl.endswith(".x86_64") or fl.endswith(".x86"):
-                has_linux_binary = True
+        for _root, _dirs, files in os.walk(install_dir):
+            for fname in files:
+                fl = fname.lower()
+                if fl.endswith(".exe"):
+                    has_exe = True
+                if fl.endswith(".sh") or fl.endswith(".x86_64") or fl.endswith(".x86"):
+                    has_linux_binary = True
+            if has_exe or has_linux_binary:
+                break  # found enough, stop early
 
     if has_exe and not has_linux_binary:
         # Windows game on Linux — needs Proton (like ACCELA line 719-730)
@@ -1379,7 +1461,7 @@ def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dic
         f'\t"StateFlags"\t\t"4"\n'
         f'\t"installdir"\t\t"{install_folder_name}"\n'
         f'\t"SizeOnDisk"\t\t"{size_on_disk}"\n'
-        f'\t"buildid"\t\t"0"\n'
+        f'\t"buildid"\t\t"{buildid}"\n'
         f"{installed_depots_str}\n"
         f"{platform_config}\n"
         "}"
@@ -1394,6 +1476,8 @@ def _create_or_update_appmanifest(appid: int, install_dir: str, depots: list[dic
         try:
             import subprocess
             subprocess.run(["chown", "deck:deck", acf_path], timeout=10, capture_output=True)
+            # Make read-only so Steam cannot rewrite StateFlags/UpdateResult
+            os.chmod(acf_path, 0o444)
         except Exception:
             pass
         logger.info(
@@ -1414,71 +1498,91 @@ async def repair_appmanifest(appid: int) -> dict:
     This mirrors what ACCELA does: create a correct ACF from scratch,
     set Linux binary permissions, and restart Steam.
     """
-    steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
-    common_path = os.path.join(steam_path, "steamapps", "common")
-
-    # Find the actual game directory
+    from steam_utils import get_steam_libraries
+    libraries = get_steam_libraries()
+    
     install_dir = ""
     game_name = ""
+    found_lib_path = ""
 
-    # Try Steam API first for official installdir
     api_installdir = await _fetch_installdir_from_api(appid)
-    if api_installdir:
-        candidate = os.path.join(common_path, api_installdir)
-        if os.path.isdir(candidate):
-            install_dir = candidate
-            logger.info(f"DeckTools: repair - found dir via API: {install_dir}")
+    try:
+        fetched_name = await fetch_app_name(appid)
+    except Exception:
+        fetched_name = ""
 
-    # Try reading existing ACF for installdir and name
-    acf_path = os.path.join(steam_path, "steamapps", f"appmanifest_{appid}.acf")
-    if os.path.exists(acf_path):
-        try:
-            with open(acf_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            m_name = re.search(r'"name"\s+"([^"]+)"', content)
-            if m_name:
-                game_name = m_name.group(1)
-            if not install_dir:
+    main_steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
+    if not libraries:
+        libraries = [{"path": main_steam_path}]
+
+    for lib in libraries:
+        lib_path = lib.get("path", "") if isinstance(lib, dict) else str(lib)
+        if not lib_path or not os.path.exists(lib_path):
+            continue
+
+        common_path = os.path.join(lib_path, "steamapps", "common")
+        acf_path = os.path.join(lib_path, "steamapps", f"appmanifest_{appid}.acf")
+
+        if api_installdir and not install_dir:
+            candidate = os.path.join(common_path, api_installdir)
+            if os.path.exists(candidate):
+                install_dir = candidate
+                found_lib_path = lib_path
+                logger.info(f"DeckTools: repair - found dir via API: {install_dir}")
+
+        if os.path.exists(acf_path) and not install_dir:
+            try:
+                import re
+                with open(acf_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                m_name = re.search(r'"name"\s+"([^"]+)"', content)
+                if m_name:
+                    game_name = m_name.group(1)
                 m_dir = re.search(r'"installdir"\s+"([^"]+)"', content)
                 if m_dir:
                     candidate = os.path.join(common_path, m_dir.group(1))
-                    if os.path.isdir(candidate):
+                    if os.path.exists(candidate):
                         install_dir = candidate
-        except Exception:
-            pass
+                        found_lib_path = lib_path
+                        logger.info(f"DeckTools: repair - found dir via ACF: {install_dir}")
+            except Exception:
+                pass
 
-    # Scan common/ if still not found
-    if not install_dir:
-        try:
-            fetched_name = await fetch_app_name(appid)
-        except Exception:
-            fetched_name = ""
-        if fetched_name:
-            game_name = game_name or fetched_name
-            # Search by name match
-            if os.path.isdir(common_path):
-                name_lower = fetched_name.lower()
-                for d in os.listdir(common_path):
-                    if d.lower().startswith(name_lower[:15]) or name_lower.startswith(d.lower()[:15]):
-                        candidate = os.path.join(common_path, d)
-                        if os.path.isdir(candidate):
-                            install_dir = candidate
-                            break
+        if not install_dir and fetched_name and os.path.exists(common_path):
+            name_lower = fetched_name.lower().strip()
+            for d in os.listdir(common_path):
+                if d.lower().startswith(name_lower[:15]) or name_lower.startswith(d.lower()[:15]):
+                    candidate = os.path.join(common_path, d)
+                    if os.path.exists(candidate):
+                        install_dir = candidate
+                        found_lib_path = lib_path
+                        logger.info(f"DeckTools: repair - found dir via scanning: {install_dir}")
+                        break
+
+        if install_dir:
+            break
 
     if not install_dir:
-        return {"success": False, "error": f"Game directory not found for AppID {appid}"}
+        return {"success": False, "error": f"Game directory not found for AppID {appid} in any library"}
 
     if not game_name:
-        game_name = os.path.basename(install_dir)
+        game_name = fetched_name or os.path.basename(install_dir)
 
-    # Parse lua for depot info (may be empty — that's OK, ACCELA uses empty InstalledDepots on Linux)
-    lua_path = os.path.join(steam_path, "config", "stplug-in", f"{appid}.lua")
-    depots = _parse_lua_depots(lua_path) if os.path.exists(lua_path) else []
+    lua_path = os.path.join(main_steam_path, "config", "stplug-in", f"{appid}.lua")
+    depots = []
+    if os.path.exists(lua_path):
+        depots = _parse_lua_depots(lua_path)
 
-    # Create the ACF (matching ACCELA)
-    _create_or_update_appmanifest(appid, install_dir, depots, game_name)
+    # ACCELA original logic creates appmanifest
+    _create_or_update_appmanifest(
+        appid,
+        install_dir,
+        depots,
+        game_name,
+        target_library_path=found_lib_path
+    )
 
-    # Restart Steam so it reads the fresh ACF
+    import asyncio
     asyncio.ensure_future(_restart_steam_delayed(3))
 
     return {
@@ -1596,8 +1700,7 @@ async def _download_zip_for_app(appid: int, target_library_path: str = "") -> No
                     if _is_download_cancelled(appid):
                         raise RuntimeError("cancelled")
                     _set_download_state(appid, {"status": "processing"})
-                    loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, _process_and_install_lua, appid, dest_path)
+                    await _process_and_install_lua(appid, dest_path)
 
                     if _is_download_cancelled(appid):
                         raise RuntimeError("cancelled")
@@ -1612,11 +1715,32 @@ async def _download_zip_for_app(appid: int, target_library_path: str = "") -> No
                     # Auto-configure SLSsteam so the game appears in Steam library
                     _set_download_state(appid, {"status": "configuring"})
                     try:
-                        from slssteam_ops import add_game_token, add_game_dlcs, add_to_additional_apps
+                        from slssteam_ops import add_game_token, add_game_dlcs, add_to_additional_apps, write_depot_decryption_keys
                         r0 = add_to_additional_apps(appid)
                         logger.info(f"DeckTools: SLSsteam add_to_additional_apps({appid}): {r0}")
                         r2 = add_game_token(appid)
                         logger.info(f"DeckTools: SLSsteam add_game_token({appid}): {r2}")
+
+                        # Write DecryptionKey entries from the installed lua into config.vdf
+                        # so Steam can decrypt the depot without needing SLSsteam injected
+                        try:
+                            lua_path_now = _get_download_state(appid).get("installedPath", "")
+                            if not lua_path_now:
+                                _steam_base = detect_steam_install_path()
+                                lua_path_now = os.path.join(_steam_base or "", "config", "stplug-in", f"{appid}.lua")
+                            if os.path.exists(lua_path_now):
+                                import re as _re
+                                with open(lua_path_now, "r", encoding="utf-8") as _lf:
+                                    _lua = _lf.read()
+                                _depot_keys = {}
+                                for _m in _re.finditer(r'addappid\(\s*(\d+)\s*,\s*\d+\s*,\s*"([0-9a-fA-F]{64})"', _lua):
+                                    _depot_keys[_m.group(1)] = _m.group(2)
+                                if _depot_keys:
+                                    _dk_result = write_depot_decryption_keys(_depot_keys)
+                                    logger.info(f"DeckTools: write_depot_decryption_keys: {_dk_result}")
+                        except Exception as _dk_exc:
+                            logger.warning(f"DeckTools: DecryptionKey write failed: {_dk_exc}")
+
                         r3 = await add_game_dlcs(appid)
                         logger.info(f"DeckTools: SLSsteam add_game_dlcs({appid}): {r3}")
                     except Exception as sls_exc:
@@ -1652,6 +1776,18 @@ async def _download_zip_for_app(appid: int, target_library_path: str = "") -> No
                                 _create_or_update_appmanifest(appid, install_dir, depots, fetched_name, target_library_path)
                             except Exception as acf_exc:
                                 logger.warning(f"DeckTools: appmanifest update error: {acf_exc}")
+
+                            # If no Linux depot was available, force Proton so Steam
+                            # doesn't refuse to launch the Windows executable
+                            if not _get_download_state(appid).get("hasLinuxDepot", False):
+                                try:
+                                    from steam_utils import set_compat_tool_for_app
+                                    if set_compat_tool_for_app(appid):
+                                        logger.info(f"DeckTools: Forced proton_experimental for {appid} (Windows-only depot)")
+                                    else:
+                                        logger.warning(f"DeckTools: Could not set compat tool for {appid}")
+                                except Exception as proton_exc:
+                                    logger.warning(f"DeckTools: set_compat_tool error: {proton_exc}")
                         else:
                             logger.info(f"DeckTools: No depots found in lua for {appid}, skipping game file download")
                     except RuntimeError:

@@ -751,5 +751,82 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
 
         logger.info(f"DeckTools: Uninstall {appid} complete. Removed: {removed}")
         return {"success": True, "removed": removed, "errors": errors}
-    except Exception as e:
+    except Exception as e:  # noqa: E722 (kept for symmetry with original)
         return {"success": False, "error": str(e)}
+
+
+# ==========================================
+#  DEPOT DECRYPTION KEYS → config.vdf
+# ==========================================
+
+def write_depot_decryption_keys(depot_token_map: dict) -> dict:
+    """Write DecryptionKey entries for depots into Steam's config.vdf.
+
+    depot_token_map: {depot_id (str/int): token (str)}
+
+    SLSsteam injects keys dynamically, but Steam also reads DecryptionKey
+    from config.vdf directly. Writing here ensures the game works even if
+    SLSsteam hasn't processed the lua yet.
+    """
+    import re
+    from steam_utils import detect_steam_install_path
+
+    steam_path = detect_steam_install_path()
+    if not steam_path:
+        return {"success": False, "error": "Steam path not found"}
+
+    config_vdf = os.path.join(steam_path, "config", "config.vdf")
+    if not os.path.exists(config_vdf):
+        return {"success": False, "error": f"config.vdf not found: {config_vdf}"}
+
+    try:
+        with open(config_vdf, "r", encoding="utf-8", errors="replace") as fh:
+            content = fh.read()
+
+        depots_re = re.compile(r'^([ \t]*)"depots"[ \t]*\n[ \t]*\{', re.MULTILINE)
+        m = depots_re.search(content)
+        if not m:
+            return {"success": False, "error": "depots section not found in config.vdf"}
+
+        d_indent = m.group(1)
+        entry_indent = d_indent + "\t"
+        field_indent = entry_indent + "\t"
+
+        written = []
+        for depot_id, token in depot_token_map.items():
+            depot_str = str(depot_id)
+            token_str = str(token).strip()
+            if not token_str or len(token_str) != 64:
+                continue
+
+            new_block = (
+                f'{entry_indent}"{depot_str}"\n'
+                f'{entry_indent}{{\n'
+                f'{field_indent}"DecryptionKey"\t\t"{token_str}"\n'
+                f'{entry_indent}}}\n'
+            )
+
+            existing_re = re.compile(
+                rf'{re.escape(entry_indent)}"{re.escape(depot_str)}"\s*\{{[^{{}}]*\}}',
+                re.DOTALL,
+            )
+            if existing_re.search(content):
+                content = existing_re.sub(new_block.rstrip("\n"), content)
+                logger.info(f"DeckTools: Updated DecryptionKey for depot {depot_str}")
+            else:
+                insert_pos = m.end()
+                content = content[:insert_pos] + "\n" + new_block + content[insert_pos:]
+                logger.info(f"DeckTools: Added DecryptionKey for depot {depot_str}")
+
+            written.append(depot_str)
+
+        tmp = config_vdf + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.replace(tmp, config_vdf)
+
+        return {"success": True, "written": written}
+
+    except Exception as exc:
+        logger.warning(f"DeckTools: write_depot_decryption_keys failed: {exc}")
+        return {"success": False, "error": str(exc)}
