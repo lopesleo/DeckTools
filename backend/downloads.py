@@ -1840,15 +1840,18 @@ async def _download_zip_for_app(appid: int, target_library_path: str = "") -> No
                         return
 
                     # Save depot snapshot for update checking.
-                    # Must reflect what was actually downloaded (depotcache), NOT SteamCMD
-                    # current manifests — using SteamCMD would mask pending updates when
-                    # the API provided older manifests than SteamCMD currently reports.
+                    # Use exact manifest IDs from the API response (what DDM was told to download).
+                    # Scanning depotcache with a numeric tiebreak is unreliable because Steam
+                    # manifest GIDs are content hashes, not sequential version numbers.
                     try:
-                        from api_manifest import save_depot_snapshot_from_depotcache
-                        depot_ids = [d["depot"] for d in depots]
-                        steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
-                        depotcache_dir = os.path.join(steam_path, "depotcache")
-                        save_depot_snapshot_from_depotcache(appid, depot_ids, depotcache_dir)
+                        from api_manifest import _depot_snapshot_path
+                        snap_manifests = {str(d["depot"]): str(d["manifest"]) for d in depots if d.get("manifest")}
+                        if snap_manifests:
+                            import json as _json
+                            snap_path = _depot_snapshot_path(appid)
+                            with open(snap_path, "w", encoding="utf-8") as _sf:
+                                _json.dump({"appid": appid, "manifests": snap_manifests}, _sf)
+                            logger.info(f"DeckTools: Saved depot snapshot for {appid} ({len(snap_manifests)} depots)")
                     except Exception as snap_exc:
                         logger.warning(f"DeckTools: depot snapshot save error: {snap_exc}")
 
