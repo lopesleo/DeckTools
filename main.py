@@ -174,6 +174,10 @@ class Plugin:
         name = await fetch_app_name(appid)
         return _j({"success": True, "name": name})
 
+    async def get_game_notices(self, appid: int) -> str:
+        from downloads import get_game_notices
+        return _j(await get_game_notices(appid))
+
     async def get_games_database(self) -> str:
         from downloads import get_games_database
         return _j(get_games_database())

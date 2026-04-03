@@ -68,6 +68,9 @@ export const getInstalledLuaScripts = async () =>
 export const fetchAppName = async (appid: number) =>
   parseResult(await call<[number], string>("fetch_app_name", appid));
 
+export const getGameNotices = async (appid: number) =>
+  parseResult(await call<[number], string>("get_game_notices", appid));
+
 // Steam Utils
 export const getGameInstallPath = async (appid: number) =>
   parseResult(await call<[number], string>("get_game_install_path", appid));

@@ -101,7 +101,6 @@ export function GameDetail({ appid }: GameDetailProps) {
   const [slscheevoBinaryPath, setSlscheevoBinaryPath] = useState("");
   const [busy, setBusy] = useState("");
   const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
-  const [gameNotices, setGameNotices] = useState<string[]>([]);
 
   const toast = (title: string, body?: string, duration = 3000) =>
     toaster.toast({ title, body: body || gameName, duration });
@@ -177,52 +176,7 @@ export function GameDetail({ appid }: GameDetailProps) {
         if (achResult.binaryPath) setSlscheevoBinaryPath(achResult.binaryPath);
       }
 
-      // Fetch DRM / launcher notices from Steam store API (best-effort, silent on failure)
-      try {
-        const storeResp = await fetch(
-          `https://store.steampowered.com/api/appdetails?appids=${appid}&filters=drm_notice,categories&l=english`,
-        );
-        if (storeResp.ok) {
-          const storeData = await storeResp.json();
-          const appData = storeData?.[String(appid)]?.data;
-          if (appData) {
-            const notices: string[] = [];
-
-            // DRM detection
-            const drmText: string = (appData.drm_notice || "").toLowerCase();
-            if (drmText.includes("denuvo")) {
-              notices.push(t("drmDenuvo"));
-            } else if (drmText.length > 0) {
-              notices.push(t("drmOther"));
-            }
-
-            // External launcher detection via categories (id 36 = Third-Party DRM)
-            // and via drm_notice / short description keywords
-            const launcherMap: [RegExp, string][] = [
-              [/ea app|ea desktop|electronic arts app/i, "EA App"],
-              [/ubisoft connect|uplay/i, "Ubisoft Connect"],
-              [/rockstar games launcher|social club/i, "Rockstar Games Launcher"],
-              [/battle\.?net/i, "Battle.net"],
-              [/epic games (store|launcher)/i, "Epic Games Launcher"],
-              [/xbox app|microsoft store/i, "Xbox App"],
-              [/2k launcher/i, "2K Launcher"],
-              [/bethesda\.?net/i, "Bethesda.net Launcher"],
-            ];
-            const searchText = `${appData.drm_notice || ""} ${appData.short_description || ""}`;
-            for (const [pattern, label] of launcherMap) {
-              if (pattern.test(searchText)) {
-                notices.push(t("launcherRequired").replace("{0}", label));
-              }
-            }
-
-            setGameNotices(notices);
-          }
-        }
-      } catch {
-        // Non-critical — ignore network errors
-      }
-
-    };
+};
     load();
   }, [appid]);
 
@@ -704,18 +658,6 @@ export function GameDetail({ appid }: GameDetailProps) {
           </>
         ) : (
           <>
-            {gameNotices.length > 0 && (
-              <PanelSectionRow>
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px", padding: "6px 0" }}>
-                  {gameNotices.map((notice, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: "#c8a84b" }}>
-                      <span>ℹ</span>
-                      <span>{notice}</span>
-                    </div>
-                  ))}
-                </div>
-              </PanelSectionRow>
-            )}
             <ActionButton
               label={hasLua ? t("redownloadManifest") : t("downloadManifest")}
               onClick={handleDownload}

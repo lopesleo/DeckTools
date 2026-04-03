@@ -235,6 +235,7 @@ const strings: Record<Lang, Record<string, string>> = {
     drmDenuvo: "Uses Denuvo Anti-Tamper",
     drmOther: "Uses third-party DRM",
     launcherRequired: "Requires {0}",
+    gameNoticesTitle: "Game Info",
   },
 
   "pt-BR": {
@@ -463,6 +464,7 @@ const strings: Record<Lang, Record<string, string>> = {
     drmDenuvo: "Usa Denuvo Anti-Tamper",
     drmOther: "Usa DRM de terceiros",
     launcherRequired: "Requer {0}",
+    gameNoticesTitle: "Informações",
   },
 };
 

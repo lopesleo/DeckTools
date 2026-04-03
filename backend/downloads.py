@@ -214,6 +214,48 @@ async def fetch_app_name(appid: int) -> str:
     return ""
 
 
+async def get_game_notices(appid: int) -> dict:
+    """Return DRM and external launcher notices for a game from the Steam store API."""
+    try:
+        client = await ensure_http_client("get_game_notices")
+        url = f"https://store.steampowered.com/api/appdetails?appids={appid}&l=english"
+        resp = await client.get(url, follow_redirects=True, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        app_data = (data.get(str(appid)) or {}).get("data") or {}
+        if not app_data:
+            return {"success": True, "notices": []}
+
+        notices = []
+        drm_text = app_data.get("drm_notice") or ""
+        short_desc = app_data.get("short_description") or ""
+        search_text = f"{drm_text} {short_desc}"
+
+        import re as _re
+        if _re.search(r"denuvo", drm_text, _re.IGNORECASE):
+            notices.append("denuvo")
+        elif drm_text.strip():
+            notices.append(f"drm:{drm_text.strip()[:120]}")
+
+        launchers = [
+            (r"ea app|ea desktop|electronic arts app", "EA App"),
+            (r"ubisoft connect|uplay", "Ubisoft Connect"),
+            (r"rockstar games launcher|social club", "Rockstar Games Launcher"),
+            (r"battle\.?net", "Battle.net"),
+            (r"epic games (store|launcher)", "Epic Games Launcher"),
+            (r"xbox app|microsoft store", "Xbox App"),
+            (r"2k launcher", "2K Launcher"),
+            (r"bethesda\.?net", "Bethesda.net Launcher"),
+        ]
+        for pattern, label in launchers:
+            if _re.search(pattern, search_text, _re.IGNORECASE):
+                notices.append(f"launcher:{label}")
+
+        return {"success": True, "notices": notices}
+    except Exception as e:
+        return {"success": False, "notices": [], "error": str(e)}
+
+
 def _append_loaded_app(appid: int, name: str) -> None:
     try:
         path = _loaded_apps_path()

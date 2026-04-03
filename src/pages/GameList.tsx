@@ -19,6 +19,7 @@ import {
   generateAllAchievements,
   getSyncAllStatus,
   getSteamLibraries,
+  getGameNotices,
 } from "../api";
 import { showLibraryPicker } from "../components/LibraryPickerModal";
 import { ROUTE_GAME_DETAIL, ROUTE_SETTINGS, ROUTE_DOWNLOADS } from "../routes";
@@ -51,6 +52,8 @@ export function GameList() {
   const [slscheevoReady, setSlscheevoReady] = useState(false);
   const [syncState, setSyncState] = useState<any>(null);
   const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
+  const [pendingNotices, setPendingNotices] = useState<string[]>([]);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadGames = useCallback(async () => {
@@ -257,6 +260,34 @@ export function GameList() {
     }
   };
 
+  // Fetch DRM / launcher notices when a valid AppID is entered (debounced, via backend)
+  useEffect(() => {
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    const id = parseInt(addAppId.trim(), 10);
+    if (!id || id <= 0) {
+      setPendingNotices([]);
+      return;
+    }
+    noticeTimerRef.current = setTimeout(async () => {
+      try {
+        const result = await getGameNotices(id);
+        if (!result.success || !result.notices?.length) {
+          setPendingNotices([]);
+          return;
+        }
+        const labels: string[] = result.notices.map((n: string) => {
+          if (n === "denuvo") return t("drmDenuvo");
+          if (n.startsWith("drm:")) return t("drmOther");
+          if (n.startsWith("launcher:")) return t("launcherRequired").replace("{0}", n.slice(9));
+          return n;
+        });
+        setPendingNotices(labels);
+      } catch {
+        // Non-critical
+      }
+    }, 600);
+  }, [addAppId]);
+
   const handleAddGame = () => {
     const id = parseInt(addAppId.trim(), 10);
     if (!id || id <= 0) {
@@ -381,6 +412,45 @@ export function GameList() {
             onChange={(e: any) => setAddAppId(e?.target?.value ?? "")}
           />
         </PanelSectionRow>
+        {pendingNotices.length > 0 && (
+          <PanelSectionRow>
+            <div style={{
+              width: "100%",
+              background: "rgba(200, 168, 75, 0.08)",
+              border: "1px solid rgba(200, 168, 75, 0.28)",
+              borderLeft: "3px solid #c8a84b",
+              borderRadius: "4px",
+              padding: "8px 12px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "5px",
+            }}>
+              <div style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                color: "#c8a84b",
+                textTransform: "uppercase",
+                letterSpacing: "0.8px",
+                marginBottom: "3px",
+              }}>
+                {t("gameNoticesTitle")}
+              </div>
+              {pendingNotices.map((notice, i) => (
+                <div key={i} style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "7px",
+                  fontSize: "12px",
+                  color: "#e5e5e5",
+                  lineHeight: "1.45",
+                }}>
+                  <span style={{ color: "#c8a84b", flexShrink: 0, marginTop: "1px" }}>▸</span>
+                  <span>{notice}</span>
+                </div>
+              ))}
+            </div>
+          </PanelSectionRow>
+        )}
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleAddGame}>
             {t("downloadManifest")}
