@@ -250,10 +250,11 @@ async def search_morrenus(query: str) -> dict:
         if len(query.strip()) < 2:
             return {"success": False, "error": "Search query must be at least 2 characters"}
 
+        from urllib.parse import urlencode
         client = await ensure_http_client("MorrenusSearch")
+        qs = urlencode({"q": query.strip(), "limit": 50})
         resp = await client.get(
-            "https://manifest.morrenus.xyz/api/v1/search",
-            params={"q": query.strip(), "limit": 50},
+            f"https://manifest.morrenus.xyz/api/v1/search?{qs}",
             headers={"Authorization": f"Bearer {key}"},
             timeout=15,
         )

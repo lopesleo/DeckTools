@@ -222,9 +222,11 @@ const strings: Record<Lang, Record<string, string>> = {
     selectLibrary: "Select Library",
     steamLibraries: "Steam Libraries",
     freeSpace: "Free: {0}",
+    free: "free",
     libraryGames: "{0} games",
     defaultLibrary: "Default",
     downloadTo: "Download to: {0}",
+    gameSize: "Game size",
 
     // Search
     noGamesFound: "No games found",
@@ -236,6 +238,7 @@ const strings: Record<Lang, Record<string, string>> = {
     drmOther: "Uses third-party DRM",
     launcherRequired: "Requires {0}",
     gameNoticesTitle: "Game Info",
+    slscheevoHint: "This game has achievements. Set up SLScheevo to unlock them.",
   },
 
   "pt-BR": {
@@ -451,9 +454,11 @@ const strings: Record<Lang, Record<string, string>> = {
     selectLibrary: "Selecionar Biblioteca",
     steamLibraries: "Bibliotecas Steam",
     freeSpace: "Livre: {0}",
+    free: "livre",
     libraryGames: "{0} jogos",
     defaultLibrary: "Padrão",
     downloadTo: "Baixar em: {0}",
+    gameSize: "Tamanho",
 
     // Search
     noGamesFound: "Nenhum jogo encontrado",
@@ -465,6 +470,7 @@ const strings: Record<Lang, Record<string, string>> = {
     drmOther: "Usa DRM de terceiros",
     launcherRequired: "Requer {0}",
     gameNoticesTitle: "Informações",
+    slscheevoHint: "Este jogo tem conquistas. Configure o SLScheevo para desbloqueá-las.",
   },
 };
 

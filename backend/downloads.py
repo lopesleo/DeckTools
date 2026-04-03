@@ -214,8 +214,72 @@ async def fetch_app_name(appid: int) -> str:
     return ""
 
 
+def _get_installed_size_bytes(appid: int) -> int:
+    """Return installed game size in bytes, or 0 if not found/installed."""
+    try:
+        from steam_utils import detect_steam_install_path, get_steam_libraries
+        libraries = get_steam_libraries()
+        steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
+        if not libraries:
+            libraries = [{"path": steam_path}]
+
+        for lib in libraries:
+            lib_path = lib.get("path", "") if isinstance(lib, dict) else str(lib)
+            acf = os.path.join(lib_path, "steamapps", f"appmanifest_{appid}.acf")
+            if not os.path.exists(acf):
+                continue
+            # Try to find install dir from ACF
+            import re as _re
+            with open(acf, "r", encoding="utf-8") as f:
+                content = f.read()
+            m = _re.search(r'"installdir"\s+"([^"]+)"', content)
+            if not m:
+                continue
+            game_dir = os.path.join(lib_path, "steamapps", "common", m.group(1))
+            if not os.path.isdir(game_dir):
+                continue
+            # Fast size via du
+            import subprocess
+            result = subprocess.run(
+                ["du", "-sb", game_dir],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0:
+                return int(result.stdout.split()[0])
+    except Exception:
+        pass
+    return 0
+
+
+def _parse_storage_from_requirements(app_data: dict) -> int:
+    """Parse required storage bytes from Steam's pc_requirements HTML.
+
+    Steam returns strings like:
+      '<strong>Storage:</strong> 10 GB available space'
+    Returns bytes, or 0 if not found.
+    """
+    import re as _re
+    for key in ("minimum", "recommended"):
+        html = (app_data.get("pc_requirements") or {}).get(key) or ""
+        if not html:
+            continue
+        # Strip tags then look for "Storage: N GB/MB"
+        plain = _re.sub(r"<[^>]+>", "", html)
+        m = _re.search(r"Storage[^:]*:\s*([\d.,]+)\s*(GB|MB|TB)", plain, _re.IGNORECASE)
+        if m:
+            value = float(m.group(1).replace(",", "."))
+            unit = m.group(2).upper()
+            if unit == "TB":
+                return int(value * 1_000_000_000_000)
+            if unit == "GB":
+                return int(value * 1_073_741_824)
+            if unit == "MB":
+                return int(value * 1_048_576)
+    return 0
+
+
 async def get_game_notices(appid: int) -> dict:
-    """Return DRM and external launcher notices for a game from the Steam store API."""
+    """Return game info, DRM and external launcher notices from the Steam store API."""
     try:
         client = await ensure_http_client("get_game_notices")
         url = f"https://store.steampowered.com/api/appdetails?appids={appid}&l=english"
@@ -224,14 +288,47 @@ async def get_game_notices(appid: int) -> dict:
         data = resp.json()
         app_data = (data.get(str(appid)) or {}).get("data") or {}
         if not app_data:
-            return {"success": True, "notices": []}
+            return {"success": True, "notices": [], "info": None}
 
+        # --- Game info ---
+        name = app_data.get("name") or ""
+        developers = app_data.get("developers") or []
+        developer = developers[0] if developers else ""
+        platforms = app_data.get("platforms") or {}
+        metacritic = (app_data.get("metacritic") or {}).get("score")
+        achievements_total = (app_data.get("achievements") or {}).get("total") or 0
+
+        # Detect PT-BR support by stripping HTML tags from supported_languages
+        import re as _re
+        lang_raw = app_data.get("supported_languages") or ""
+        lang_plain = _re.sub(r"<[^>]+>", "", lang_raw)
+        has_ptbr = bool(_re.search(r"portuguese.*brazil|brazil.*portuguese", lang_plain, _re.IGNORECASE))
+
+        # --- Game size ---
+        size_bytes = _get_installed_size_bytes(appid)
+        if not size_bytes:
+            size_bytes = _parse_storage_from_requirements(app_data)
+
+        info = {
+            "name": name,
+            "developer": developer,
+            "metacritic": metacritic,
+            "platforms": {
+                "windows": bool(platforms.get("windows")),
+                "linux": bool(platforms.get("linux")),
+                "mac": bool(platforms.get("mac")),
+            },
+            "achievements": achievements_total,
+            "hasPtBR": has_ptbr,
+            "sizeBytes": size_bytes,
+        }
+
+        # --- DRM / launcher notices ---
         notices = []
         drm_text = app_data.get("drm_notice") or ""
         short_desc = app_data.get("short_description") or ""
         search_text = f"{drm_text} {short_desc}"
 
-        import re as _re
         if _re.search(r"denuvo", drm_text, _re.IGNORECASE):
             notices.append("denuvo")
         elif drm_text.strip():
@@ -251,9 +348,9 @@ async def get_game_notices(appid: int) -> dict:
             if _re.search(pattern, search_text, _re.IGNORECASE):
                 notices.append(f"launcher:{label}")
 
-        return {"success": True, "notices": notices}
+        return {"success": True, "notices": notices, "info": info}
     except Exception as e:
-        return {"success": False, "notices": [], "error": str(e)}
+        return {"success": False, "notices": [], "info": None, "error": str(e)}
 
 
 def _append_loaded_app(appid: int, name: str) -> None:

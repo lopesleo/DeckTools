@@ -40,7 +40,11 @@ export function GameList() {
   const [addStatus, setAddStatus] = useState("");
   const [activeDownloadId, setActiveDownloadId] = useState<number | null>(null);
   const [activeDownloadPhase, setActiveDownloadPhase] = useState("");
+  const [downloadPct, setDownloadPct] = useState(0);
+  const [downloadSpeed, setDownloadSpeed] = useState(0);
+  const [downloadBytes, setDownloadBytes] = useState({ read: 0, total: 0 });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const speedRef = useRef<{ bytes: number; ts: number }>({ bytes: 0, ts: 0 });
   const [sortMode, setSortMode] = useState<"name" | "appid" | "recent">("name");
 
   // Morrenus search state
@@ -53,6 +57,7 @@ export function GameList() {
   const [syncState, setSyncState] = useState<any>(null);
   const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
   const [pendingNotices, setPendingNotices] = useState<string[]>([]);
+  const [pendingGameInfo, setPendingGameInfo] = useState<any>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -143,6 +148,7 @@ export function GameList() {
             setAddStatus(t("doneRestartSteam"));
             setActiveDownloadId(null);
             setActiveDownloadPhase("");
+            setDownloadPct(0); setDownloadSpeed(0); setDownloadBytes({ read: 0, total: 0 });
             loadGames();
             setTimeout(() => setAddStatus(""), 6000);
           } else if (phase === "failed") {
@@ -151,15 +157,37 @@ export function GameList() {
             setAddStatus(st.error || t("downloadFailed"));
             setActiveDownloadId(null);
             setActiveDownloadPhase("");
+            setDownloadPct(0); setDownloadSpeed(0); setDownloadBytes({ read: 0, total: 0 });
           } else if (phase === "cancelled") {
             if (pollRef.current) clearInterval(pollRef.current);
             pollRef.current = null;
             setAddStatus(t("downloadCancelled"));
             setActiveDownloadId(null);
             setActiveDownloadPhase("");
+            setDownloadPct(0); setDownloadSpeed(0); setDownloadBytes({ read: 0, total: 0 });
           } else {
             setAddStatus(formatStatus(st));
             setActiveDownloadPhase(phase);
+
+            const total = st.totalBytes || 0;
+            const read = st.bytesRead || 0;
+            if (phase === "depot_download" && total > 0) {
+              setDownloadPct(Math.min(100, Math.round((read / total) * 100)));
+              setDownloadBytes({ read, total });
+              const now = Date.now();
+              const prev = speedRef.current;
+              if (prev.ts > 0 && now - prev.ts > 0) {
+                const byteDelta = read - prev.bytes;
+                const timeDelta = (now - prev.ts) / 1000;
+                if (byteDelta >= 0) setDownloadSpeed(Math.round(byteDelta / timeDelta));
+              }
+              speedRef.current = { bytes: read, ts: Date.now() };
+            } else {
+              setDownloadPct(0);
+              setDownloadSpeed(0);
+              setDownloadBytes({ read: 0, total: 0 });
+              speedRef.current = { bytes: 0, ts: 0 };
+            }
           }
         } catch {
           // ignore poll errors
@@ -266,15 +294,19 @@ export function GameList() {
     const id = parseInt(addAppId.trim(), 10);
     if (!id || id <= 0) {
       setPendingNotices([]);
+      setPendingGameInfo(null);
       return;
     }
     noticeTimerRef.current = setTimeout(async () => {
       try {
         const result = await getGameNotices(id);
-        if (!result.success || !result.notices?.length) {
+        if (!result.success) {
           setPendingNotices([]);
+          setPendingGameInfo(null);
           return;
         }
+        setPendingGameInfo(result.info || null);
+        if (!result.notices?.length) { setPendingNotices([]); return; }
         const labels: string[] = result.notices.map((n: string) => {
           if (n === "denuvo") return t("drmDenuvo");
           if (n.startsWith("drm:")) return t("drmOther");
@@ -297,7 +329,7 @@ export function GameList() {
     if (steamLibraries.length > 1) {
       showLibraryPicker(steamLibraries, (libraryPath) => {
         doStartDownload(id, libraryPath);
-      });
+      }, pendingGameInfo?.sizeBytes || 0);
       return;
     }
     doStartDownload(id);
@@ -412,6 +444,77 @@ export function GameList() {
             onChange={(e: any) => setAddAppId(e?.target?.value ?? "")}
           />
         </PanelSectionRow>
+        {pendingGameInfo && (
+          <PanelSectionRow>
+            <div style={{
+              width: "100%",
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.10)",
+              borderLeft: "3px solid #4a9eff",
+              borderRadius: "4px",
+              padding: "8px 12px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+            }}>
+              {pendingGameInfo.name && (
+                <div style={{ fontSize: "13px", fontWeight: 600, color: "#fff", lineHeight: "1.3" }}>
+                  {pendingGameInfo.name}
+                </div>
+              )}
+              {pendingGameInfo.developer && (
+                <div style={{ fontSize: "11px", color: "#9aa4b2" }}>
+                  {pendingGameInfo.developer}
+                  {pendingGameInfo.metacritic != null && (
+                    <span style={{
+                      marginLeft: "8px",
+                      background: pendingGameInfo.metacritic >= 75 ? "rgba(100,200,80,0.18)" : pendingGameInfo.metacritic >= 50 ? "rgba(200,168,75,0.18)" : "rgba(220,80,80,0.18)",
+                      color: pendingGameInfo.metacritic >= 75 ? "#7ed36f" : pendingGameInfo.metacritic >= 50 ? "#c8a84b" : "#e06060",
+                      borderRadius: "3px",
+                      padding: "1px 5px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                    }}>
+                      MC {pendingGameInfo.metacritic}
+                    </span>
+                  )}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: "6px", marginTop: "2px", flexWrap: "wrap" }}>
+                {pendingGameInfo.platforms?.windows && (
+                  <span style={{ fontSize: "10px", color: "#9aa4b2", background: "rgba(255,255,255,0.07)", borderRadius: "3px", padding: "1px 6px" }}>Windows</span>
+                )}
+                {pendingGameInfo.platforms?.linux && (
+                  <span style={{ fontSize: "10px", color: "#9aa4b2", background: "rgba(255,255,255,0.07)", borderRadius: "3px", padding: "1px 6px" }}>Linux</span>
+                )}
+                {pendingGameInfo.platforms?.mac && (
+                  <span style={{ fontSize: "10px", color: "#9aa4b2", background: "rgba(255,255,255,0.07)", borderRadius: "3px", padding: "1px 6px" }}>macOS</span>
+                )}
+                {pendingGameInfo.achievements > 0 && (
+                  <span style={{ fontSize: "10px", color: "#9aa4b2", background: "rgba(255,255,255,0.07)", borderRadius: "3px", padding: "1px 6px" }}>
+                    {pendingGameInfo.achievements} {t("achievements")}
+                  </span>
+                )}
+                {pendingGameInfo.hasPtBR && (
+                  <span style={{ fontSize: "10px", color: "#9aa4b2", background: "rgba(255,255,255,0.07)", borderRadius: "3px", padding: "1px 6px" }}>PT-BR</span>
+                )}
+                {pendingGameInfo.sizeBytes > 0 && (
+                  <span style={{ fontSize: "10px", color: "#9aa4b2", background: "rgba(255,255,255,0.07)", borderRadius: "3px", padding: "1px 6px" }}>
+                    {pendingGameInfo.sizeBytes >= 1073741824
+                      ? `${(pendingGameInfo.sizeBytes / 1073741824).toFixed(1)} GB`
+                      : `${Math.round(pendingGameInfo.sizeBytes / 1048576)} MB`}
+                  </span>
+                )}
+              </div>
+              {pendingGameInfo.achievements > 0 && !slscheevoReady && (
+                <div style={{ marginTop: "4px", fontSize: "11px", color: "#c8a84b", display: "flex", gap: "6px", alignItems: "flex-start" }}>
+                  <span style={{ flexShrink: 0 }}>⚡</span>
+                  <span>{t("slscheevoHint")}</span>
+                </div>
+              )}
+            </div>
+          </PanelSectionRow>
+        )}
         {pendingNotices.length > 0 && (
           <PanelSectionRow>
             <div style={{
@@ -458,10 +561,9 @@ export function GameList() {
         </PanelSectionRow>
         {addStatus && (
           <PanelSectionRow>
-            <div
-              style={{
+            <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "6px" }}>
+              <div style={{
                 textAlign: "center",
-                padding: "6px",
                 color:
                   addStatus.startsWith(t("error")) ||
                     addStatus === t("invalidAppId") ||
@@ -469,9 +571,35 @@ export function GameList() {
                     ? "#ff6b6b"
                     : "#8bca68",
                 fontSize: "12px",
-              }}
-            >
-              {addStatus}
+              }}>
+                {addStatus}
+              </div>
+              {activeDownloadPhase === "depot_download" && downloadBytes.total > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div style={{ height: "6px", background: "rgba(255,255,255,0.1)", borderRadius: "3px", overflow: "hidden" }}>
+                    <div style={{
+                      height: "100%",
+                      width: `${downloadPct}%`,
+                      background: "linear-gradient(90deg, #4a9eff, #7ed36f)",
+                      borderRadius: "3px",
+                      transition: "width 0.4s ease",
+                    }} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#9aa4b2" }}>
+                    <span>
+                      {(downloadBytes.read / 1073741824).toFixed(2)} / {(downloadBytes.total / 1073741824).toFixed(2)} GB
+                      {" "}({downloadPct}%)
+                    </span>
+                    {downloadSpeed > 0 && (
+                      <span style={{ color: "#7ed36f" }}>
+                        {downloadSpeed >= 1048576
+                          ? `${(downloadSpeed / 1048576).toFixed(1)} MB/s`
+                          : `${Math.round(downloadSpeed / 1024)} KB/s`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </PanelSectionRow>
         )}

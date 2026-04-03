@@ -7,3 +7,4 @@ tmpclaude-*
 askpass.sh
 deploy.sh
 deploy.bat
+backend/appaccesstokens.json

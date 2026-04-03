@@ -663,12 +663,27 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
             acf_file = os.path.join(steamapps_dir, f"appmanifest_{appid}.acf")
             if os.path.exists(acf_file):
                 try:
+                    os.chmod(acf_file, 0o644)
                     os.remove(acf_file)
                     removed.append("appmanifest")
                 except Exception as e:
                     errors.append(f"Failed to remove appmanifest: {e}")
         else:
             logger.info(f"DeckTools: No game directory found for {appid}, skipping file removal")
+            # Still try to remove ACF from all known libraries
+            try:
+                from steam_utils import get_steam_libraries, detect_steam_install_path
+                libs = get_steam_libraries() or [{"path": detect_steam_install_path()}]
+                for lib in libs:
+                    lib_path = lib.get("path", "") if isinstance(lib, dict) else str(lib)
+                    acf_file = os.path.join(lib_path, "steamapps", f"appmanifest_{appid}.acf")
+                    if os.path.exists(acf_file):
+                        os.chmod(acf_file, 0o644)
+                        os.remove(acf_file)
+                        removed.append("appmanifest")
+                        logger.info(f"DeckTools: Removed orphan ACF: {acf_file}")
+            except Exception as e:
+                logger.warning(f"DeckTools: ACF fallback removal error: {e}")
 
         # 1b. Remove compatdata/proton prefix if requested
         if remove_compatdata:
