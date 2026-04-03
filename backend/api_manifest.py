@@ -13,7 +13,7 @@ from config import (
     HTTP_PROXY_TIMEOUT_SECONDS,
 )
 from http_client import ensure_http_client
-from paths import backend_path
+from paths import backend_path, data_path
 from utils import count_apis, normalize_manifest_text, read_text, write_text
 
 try:
@@ -35,7 +35,7 @@ async def init_apis() -> dict:
         return {"success": True, "message": _INIT_APIS_LAST_MESSAGE}
 
     client = await ensure_http_client("InitApis")
-    api_json_path = backend_path(API_JSON_FILE)
+    api_json_path = data_path(API_JSON_FILE)
     message = ""
 
     if os.path.exists(api_json_path):
@@ -108,7 +108,7 @@ async def fetch_free_apis_now() -> dict:
         if not normalized:
             return {"success": False, "error": "Empty manifest"}
 
-        write_text(backend_path(API_JSON_FILE), normalized)
+        write_text(data_path(API_JSON_FILE), normalized)
         try:
             data = json.loads(normalized)
             count = len(data.get("api_list", []))
@@ -122,7 +122,7 @@ async def fetch_free_apis_now() -> dict:
 
 def load_api_manifest() -> List[Dict[str, Any]]:
     """Return the list of enabled APIs from api.json."""
-    path = backend_path(API_JSON_FILE)
+    path = data_path(API_JSON_FILE)
     text = read_text(path)
     normalized = normalize_manifest_text(text)
     if normalized and normalized != text:
@@ -172,7 +172,7 @@ def load_ryu_cookie() -> str:
 def update_morrenus_key(key_content: str) -> dict:
     """Update the Morrenus API key in api.json."""
     try:
-        path = backend_path(API_JSON_FILE)
+        path = data_path(API_JSON_FILE)
         key_content = key_content.strip()
         if not key_content:
             return {"success": False, "error": "Key cannot be empty"}
@@ -221,7 +221,7 @@ def update_morrenus_key(key_content: str) -> dict:
 def _get_morrenus_key() -> str:
     """Extract the Morrenus API key from api.json."""
     try:
-        path = backend_path(API_JSON_FILE)
+        path = data_path(API_JSON_FILE)
         if not os.path.exists(path):
             return ""
         with open(path, "r", encoding="utf-8") as f:
@@ -352,6 +352,45 @@ async def save_depot_snapshot(appid: int) -> dict:
         return {"success": False, "error": str(e)}
 
 
+def save_depot_snapshot_from_depotcache(appid: int, depot_ids: list, depotcache_dir: str) -> dict:
+    """Save depot snapshot by reading manifest files actually downloaded into depotcache.
+
+    Scans depotcache_dir for files named {depot_id}_{manifest_id}.manifest for each
+    depot_id in depot_ids and records the installed manifest IDs.  This is the source
+    of truth for what DDM actually downloaded (not what SteamCMD currently reports).
+    """
+    import re as _re
+
+    try:
+        appid = int(appid)
+        manifests: dict = {}
+
+        depot_id_set = {str(d) for d in depot_ids}
+
+        if os.path.isdir(depotcache_dir):
+            for fname in os.listdir(depotcache_dir):
+                m = _re.fullmatch(r"(\d+)_(\d+)\.manifest", fname)
+                if m and m.group(1) in depot_id_set:
+                    depot_id = m.group(1)
+                    manifest_id = m.group(2)
+                    # Keep the newest file per depot (largest manifest ID as tiebreak)
+                    if depot_id not in manifests or int(manifest_id) > int(manifests[depot_id]):
+                        manifests[depot_id] = manifest_id
+
+        if not manifests:
+            logger.warning(f"DeckTools: No manifest files found in depotcache for {appid}, depot_ids={depot_ids}")
+            return {"success": False, "error": "No manifest files found in depotcache"}
+
+        path = _depot_snapshot_path(appid)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"appid": appid, "manifests": manifests}, f)
+        logger.info(f"DeckTools: Saved depot snapshot for {appid} from depotcache ({len(manifests)} depots)")
+        return {"success": True}
+    except Exception as e:
+        logger.warning(f"DeckTools: Failed to save depot snapshot from depotcache for {appid}: {e}")
+        return {"success": False, "error": str(e)}
+
+
 async def check_game_update(appid: int) -> dict:
     """Check if a game has an update by comparing saved depot snapshot with SteamCMD public API."""
     try:
@@ -363,15 +402,24 @@ async def check_game_update(appid: int) -> dict:
         # 1. Read saved snapshot (created after last download)
         snapshot_path = _depot_snapshot_path(appid)
         if not os.path.exists(snapshot_path):
-            # No snapshot yet — create one from current SteamCMD data so future checks work
-            save_result = await save_depot_snapshot(appid)
-            if save_result.get("success"):
-                return {
-                    "success": True,
-                    "updateAvailable": False,
-                    "message": "Baseline snapshot created. Check again later for updates.",
-                }
-            return {"success": False, "error": "No update baseline. Re-download the game first."}
+            # No snapshot — try to build baseline from depotcache (actual installed manifests).
+            # Using SteamCMD here would create a baseline that matches current remote,
+            # making the comparison trivially equal and masking real pending updates.
+            from steam_utils import detect_steam_install_path
+            steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
+            depotcache_dir = os.path.join(steam_path, "depotcache")
+            remote_manifests_for_baseline = await _fetch_steamcmd_manifests(appid)
+            depot_ids = list(remote_manifests_for_baseline.keys())
+            if depot_ids and os.path.isdir(depotcache_dir):
+                result = save_depot_snapshot_from_depotcache(appid, depot_ids, depotcache_dir)
+                if result.get("success") and os.path.exists(snapshot_path):
+                    logger.info(f"DeckTools: Built update baseline for {appid} from depotcache")
+                    # Fall through to comparison below using the just-saved snapshot
+                else:
+                    # No manifest files in depotcache — game was not installed via DeckTools
+                    return {"success": False, "error": "No update baseline. Re-download the game first."}
+            else:
+                return {"success": False, "error": "No update baseline. Re-download the game first."}
 
         with open(snapshot_path, "r", encoding="utf-8") as f:
             snapshot = json.loads(f.read())
