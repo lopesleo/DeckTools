@@ -230,6 +230,11 @@ const strings: Record<Lang, Record<string, string>> = {
     noGamesFound: "No games found",
     searchFailed: "Search failed",
     enterAtLeast2Chars: "Enter at least 2 characters",
+
+    // DRM / launcher notices
+    drmDenuvo: "Uses Denuvo Anti-Tamper",
+    drmOther: "Uses third-party DRM",
+    launcherRequired: "Requires {0}",
   },
 
   "pt-BR": {
@@ -453,6 +458,11 @@ const strings: Record<Lang, Record<string, string>> = {
     noGamesFound: "Nenhum jogo encontrado",
     searchFailed: "Busca falhou",
     enterAtLeast2Chars: "Insira pelo menos 2 caracteres",
+
+    // DRM / launcher notices
+    drmDenuvo: "Usa Denuvo Anti-Tamper",
+    drmOther: "Usa DRM de terceiros",
+    launcherRequired: "Requer {0}",
   },
 };
 
