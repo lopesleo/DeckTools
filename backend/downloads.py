@@ -1111,6 +1111,8 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
         "encountered 401",
         "manifest 401",
     )
+    _DECRYPTION_ERROR_MARKERS = ("padding is invalid",)
+    _FILE_LOCK_MARKERS = ("being used by another process", "ioexception: the process cannot access")
 
     for idx, depot_info in enumerate(depots):
         depot_id = depot_info["depot"]
@@ -1132,7 +1134,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
             "-os", "linux",
         ]
 
-        if os.path.exists(manifest_file):
+        if has_local_manifest:
             cmd.extend(["-manifestfile", manifest_file])
             logger.info(f"DeckTools: Using manifest file: {manifest_file}")
 
@@ -1142,7 +1144,8 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
         except Exception:
             pass
 
-        cmd.append("-validate")
+        # Note: -validate intentionally omitted — it opens all existing game files to check
+        # hashes, which causes IOException when Steam has any file open between retries.
 
         depot_succeeded = False
 
@@ -1179,6 +1182,9 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
                 percent_re = re.compile(r"(\d{1,3}(?:\.\d{1,2})?)%")
                 last_line = ""
+                padding_error_count = 0
+                _PADDING_ERROR_THRESHOLD = 5
+                killed_for_padding = False
 
                 while True:
                     line = await process.stdout.readline()
@@ -1192,8 +1198,20 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
                     clean_line = line.decode("utf-8", errors="replace").strip()
                     if clean_line:
                         last_line = clean_line
-                        depot_output.append(clean_line.lower())
+                        clean_lower = clean_line.lower()
+                        depot_output.append(clean_lower)
                         logger.info(f"DeckTools: DDM[{depot_id}]: {clean_line}")
+
+                        if "padding is invalid" in clean_lower:
+                            padding_error_count += 1
+                            if padding_error_count >= _PADDING_ERROR_THRESHOLD:
+                                logger.warning(
+                                    f"DeckTools: Depot {depot_id} — too many decryption errors "
+                                    f"({padding_error_count}), killing DDM early"
+                                )
+                                killed_for_padding = True
+                                process.kill()
+                                break
                         m = percent_re.search(clean_line)
                         if m:
                             pct = float(m.group(1))
@@ -1210,9 +1228,33 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
                 rc = process.returncode
                 logger.info(f"DeckTools: DepotDownloader depot {depot_id} exit code: {rc}, last output: {last_line}")
 
+                # Give the OS a moment to release file handles after a killed process
+                if killed_for_padding:
+                    await asyncio.sleep(3)
+
                 full_log = "\n".join(depot_output)
                 auth_error = any(x in full_log for x in _AUTH_ERROR_MARKERS)
                 manifest_unavailable = any(x in full_log for x in _MANIFEST_UNAVAILABLE_MARKERS)
+                decryption_error = any(x in full_log.lower() for x in _DECRYPTION_ERROR_MARKERS)
+                file_lock_error = any(x in full_log.lower() for x in _FILE_LOCK_MARKERS)
+
+                if decryption_error:
+                    # Wrong depot key — retrying won't help, skip and continue with others
+                    logger.warning(
+                        f"DeckTools: Depot {depot_id} skipped — decryption failed (wrong key from API). "
+                        f"Game will run via Proton if Windows depot succeeded."
+                    )
+                    break
+
+                if file_lock_error:
+                    # Steam (or a previous DDM process) has a game file open. Retrying with
+                    # -validate would hit the same lock. Skip this depot as non-fatal — the
+                    # partially downloaded files are still usable via Proton.
+                    logger.warning(
+                        f"DeckTools: Depot {depot_id} skipped — file locked by another process "
+                        f"(Steam may be indexing the game directory). Proton fallback active."
+                    )
+                    break
 
                 if auth_error or manifest_unavailable:
                     if not has_local_manifest:
