@@ -1839,10 +1839,16 @@ async def _download_zip_for_app(appid: int, target_library_path: str = "") -> No
                         _set_download_state(appid, {"status": "failed", "error": f"Game download failed: {depot_exc}"})
                         return
 
-                    # Save depot snapshot for update checking
+                    # Save depot snapshot for update checking.
+                    # Must reflect what was actually downloaded (depotcache), NOT SteamCMD
+                    # current manifests — using SteamCMD would mask pending updates when
+                    # the API provided older manifests than SteamCMD currently reports.
                     try:
-                        from api_manifest import save_depot_snapshot
-                        await save_depot_snapshot(appid)
+                        from api_manifest import save_depot_snapshot_from_depotcache
+                        depot_ids = [d["depot"] for d in depots]
+                        steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
+                        depotcache_dir = os.path.join(steam_path, "depotcache")
+                        save_depot_snapshot_from_depotcache(appid, depot_ids, depotcache_dir)
                     except Exception as snap_exc:
                         logger.warning(f"DeckTools: depot snapshot save error: {snap_exc}")
 
