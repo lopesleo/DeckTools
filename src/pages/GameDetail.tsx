@@ -49,6 +49,7 @@ import {
   getSteamLibraries,
 } from "../api";
 import { useT } from "../i18n";
+import { showLibraryPicker } from "../components/LibraryPickerModal";
 
 interface GameDetailProps {
   appid: number;
@@ -100,8 +101,6 @@ export function GameDetail({ appid }: GameDetailProps) {
   const [slscheevoBinaryPath, setSlscheevoBinaryPath] = useState("");
   const [busy, setBusy] = useState("");
   const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
-  const [selectedLibrary, setSelectedLibrary] = useState("");
-  const [pickingLibrary, setPickingLibrary] = useState(false);
 
   const toast = (title: string, body?: string, duration = 3000) =>
     toaster.toast({ title, body: body || gameName, duration });
@@ -122,6 +121,13 @@ export function GameDetail({ appid }: GameDetailProps) {
 
   useEffect(() => {
     const load = async () => {
+      // Load libraries immediately so the picker is ready before user clicks
+      getSteamLibraries().then((libResult) => {
+        if (libResult.success && libResult.libraries) {
+          setSteamLibraries(libResult.libraries);
+        }
+      });
+
       const nameResult = await fetchAppName(appid);
       if (nameResult.success && nameResult.name) {
         setGameName(nameResult.name);
@@ -170,10 +176,6 @@ export function GameDetail({ appid }: GameDetailProps) {
         if (achResult.binaryPath) setSlscheevoBinaryPath(achResult.binaryPath);
       }
 
-      const libResult = await getSteamLibraries();
-      if (libResult.success && libResult.libraries) {
-        setSteamLibraries(libResult.libraries);
-      }
     };
     load();
   }, [appid]);
@@ -192,6 +194,7 @@ export function GameDetail({ appid }: GameDetailProps) {
         setDownloadState(status.state);
         if (status.state.status === "done") {
           setHasLua(true);
+          setUpdateStatus(null);
           toast(t("toastDownloadComplete"), gameName);
         } else if (status.state.status === "failed") {
           toast(t("toastDownloadFailed"), status.state.error || gameName, 5000);
@@ -243,20 +246,24 @@ export function GameDetail({ appid }: GameDetailProps) {
     return () => clearInterval(interval);
   }, [achievementStatus, appid]);
 
-  const handleDownload = async () => {
-    // If game not yet installed and multiple libraries exist, show picker first
-    if (!installPath && steamLibraries.length > 1 && !pickingLibrary) {
-      setPickingLibrary(true);
-      return;
-    }
-    setPickingLibrary(false);
-    const result = await startDownload(appid, selectedLibrary);
+  const doStartDownload = async (libraryPath: string = "") => {
+    const result = await startDownload(appid, libraryPath);
     if (result.success) {
       setDownloadState({ status: "queued", bytesRead: 0, totalBytes: 0 });
       toast(t("toastDownloadStarted"), gameName, 2000);
     } else {
       toast(t("toastError"), result.error || t("failedToStartDownload"), 4000);
     }
+  };
+
+  const handleDownload = () => {
+    if (!installPath && steamLibraries.length > 1) {
+      showLibraryPicker(steamLibraries, (libraryPath) => {
+        doStartDownload(libraryPath);
+      });
+      return;
+    }
+    doStartDownload();
   };
 
   const handleCancel = async () => {
@@ -604,43 +611,7 @@ export function GameDetail({ appid }: GameDetailProps) {
 
       {/* Download section */}
       <PanelSection title={t("download")}>
-        {pickingLibrary ? (
-          <>
-            <PanelSectionRow>
-              <div style={{ fontSize: "12px", color: "#dcdedf" }}>
-                {t("selectLibrary")}
-              </div>
-            </PanelSectionRow>
-            {steamLibraries.map((lib: any, idx: number) => {
-              const isSelected = selectedLibrary === lib.path || (!selectedLibrary && idx === 0);
-              const freeGB = (lib.freeBytes / (1024 * 1024 * 1024)).toFixed(1);
-              const shortPath = lib.path.split("/").slice(-2).join("/");
-              return (
-                <PanelSectionRow key={lib.path}>
-                  <ButtonItem
-                    layout="below"
-                    onClick={() => setSelectedLibrary(lib.path)}
-                    description={`${t("freeSpace", `${freeGB} GB`)} — ${t("libraryGames", lib.gameCount)}`}
-                  >
-                    <span style={{ color: isSelected ? "#1a9fff" : "#dcdedf" }}>
-                      {isSelected ? "● " : "○ "}
-                      {shortPath} {idx === 0 ? `(${t("defaultLibrary")})` : ""}
-                    </span>
-                  </ButtonItem>
-                </PanelSectionRow>
-              );
-            })}
-            <ActionButton
-              label={t("downloadManifest")}
-              onClick={handleDownload}
-              variant="primary"
-            />
-            <ActionButton
-              label={t("cancel")}
-              onClick={() => setPickingLibrary(false)}
-            />
-          </>
-        ) : isDownloading ? (
+        {isDownloading ? (
           <>
             <PanelSectionRow>
               <div style={{ fontSize: "12px", color: "#dcdedf" }}>

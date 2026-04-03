@@ -18,7 +18,9 @@ import {
   checkAllAchievementsStatus,
   generateAllAchievements,
   getSyncAllStatus,
+  getSteamLibraries,
 } from "../api";
+import { showLibraryPicker } from "../components/LibraryPickerModal";
 import { ROUTE_GAME_DETAIL, ROUTE_SETTINGS, ROUTE_DOWNLOADS } from "../routes";
 import { useT } from "../i18n";
 import { toaster } from "@decky/api";
@@ -48,6 +50,7 @@ export function GameList() {
   const [showMoreResults, setShowMoreResults] = useState(false);
   const [slscheevoReady, setSlscheevoReady] = useState(false);
   const [syncState, setSyncState] = useState<any>(null);
+  const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
   const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadGames = useCallback(async () => {
@@ -178,6 +181,13 @@ export function GameList() {
   useEffect(() => {
     loadGames();
 
+    // Load Steam libraries for library picker
+    getSteamLibraries().then((libResult) => {
+      if (libResult.success && libResult.libraries) {
+        setSteamLibraries(libResult.libraries);
+      }
+    });
+
     // Check SLScheevo availability
     (async () => {
       try {
@@ -232,15 +242,10 @@ export function GameList() {
     return () => cleanup1();
   }, [loadGames, formatStatus, startPolling]);
 
-  const handleAddGame = async () => {
-    const id = parseInt(addAppId.trim(), 10);
-    if (!id || id <= 0) {
-      setAddStatus(t("invalidAppId"));
-      return;
-    }
+  const doStartDownload = async (id: number, libraryPath: string = "") => {
     setAddStatus(t("startingDownload"));
     try {
-      const result = await startDownload(id);
+      const result = await startDownload(id, libraryPath);
       if (!result.success) {
         setAddStatus(result.error || t("downloadFailed"));
         return;
@@ -250,6 +255,21 @@ export function GameList() {
     } catch (err: any) {
       setAddStatus(`${t("error")}: ${err?.message || String(err)}`);
     }
+  };
+
+  const handleAddGame = () => {
+    const id = parseInt(addAppId.trim(), 10);
+    if (!id || id <= 0) {
+      setAddStatus(t("invalidAppId"));
+      return;
+    }
+    if (steamLibraries.length > 1) {
+      showLibraryPicker(steamLibraries, (libraryPath) => {
+        doStartDownload(id, libraryPath);
+      });
+      return;
+    }
+    doStartDownload(id);
   };
 
   const handleSearchMorrenus = async () => {
