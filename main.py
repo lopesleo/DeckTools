@@ -34,17 +34,34 @@ def _j(obj) -> str:
     return json.dumps(obj)
 
 
+_injection_repaired_on_startup: bool = False
+
+
 class Plugin:
     # ==========================================================================
     # Lifecycle
     # ==========================================================================
 
     async def _main(self):
+        global _injection_repaired_on_startup
         logger.info("DeckTools: Plugin loaded")
         try:
             from api_manifest import init_apis
             from downloads import init_applist, init_games_db, validate_ddm_cache
-            from paths import get_platform_summary
+            from paths import get_platform_summary, verify_slssteam_injected
+
+            # Check + auto-repair SLSsteam injection before anything else
+            try:
+                inj = verify_slssteam_injected()
+                if inj.get("patched"):
+                    _injection_repaired_on_startup = True
+                    logger.info("DeckTools: SLSsteam injection was missing — patched steam.sh. Steam restart required.")
+                elif inj.get("already_ok"):
+                    logger.info("DeckTools: SLSsteam injection OK")
+                else:
+                    logger.warning(f"DeckTools: SLSsteam injection check: {inj}")
+            except Exception as exc:
+                logger.warning(f"DeckTools: SLSsteam injection check failed: {exc}")
 
             summary = get_platform_summary()
             logger.info(f"DeckTools: Platform summary: {json.dumps(summary)}")
@@ -72,6 +89,22 @@ class Plugin:
     # ==========================================================================
     # Platform & Paths
     # ==========================================================================
+
+    async def get_injection_status(self) -> str:
+        """Return whether SLSsteam injection is OK and if it was repaired on startup."""
+        from paths import verify_slssteam_injected
+        result = verify_slssteam_injected()
+        result["was_repaired_on_startup"] = _injection_repaired_on_startup
+        return _j(result)
+
+    async def restart_steam(self) -> str:
+        """Shutdown Steam (Game Mode auto-restarts it)."""
+        try:
+            import subprocess
+            subprocess.Popen(["steam", "-shutdown"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return _j({"success": True})
+        except Exception as exc:
+            return _j({"success": False, "error": str(exc)})
 
     async def get_platform_summary(self) -> str:
         from paths import get_platform_summary

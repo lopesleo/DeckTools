@@ -21,6 +21,12 @@ export const getPlatformSummary = async () =>
 export const verifySlssteamInjected = async () =>
   parseResult(await call<[], string>("verify_slssteam_injected"));
 
+export const getInjectionStatus = async () =>
+  parseResult(await call<[], string>("get_injection_status"));
+
+export const restartSteam = async () =>
+  parseResult(await call<[], string>("restart_steam"));
+
 // API Manifest
 export const fetchFreeApisNow = async () =>
   parseResult(await call<[], string>("fetch_free_apis_now"));

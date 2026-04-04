@@ -20,6 +20,8 @@ import {
   getSyncAllStatus,
   getSteamLibraries,
   getGameNotices,
+  getInjectionStatus,
+  restartSteam,
 } from "../api";
 import { showLibraryPicker } from "../components/LibraryPickerModal";
 import { ROUTE_GAME_DETAIL, ROUTE_SETTINGS, ROUTE_DOWNLOADS } from "../routes";
@@ -54,6 +56,8 @@ export function GameList() {
   const [searchError, setSearchError] = useState("");
   const [showMoreResults, setShowMoreResults] = useState(false);
   const [slscheevoReady, setSlscheevoReady] = useState(false);
+  const [injectionWarning, setInjectionWarning] = useState(false);
+  const [restartingStream, setRestartingStream] = useState(false);
   const [syncState, setSyncState] = useState<any>(null);
   const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
   const [pendingNotices, setPendingNotices] = useState<string[]>([]);
@@ -169,19 +173,42 @@ export function GameList() {
             setAddStatus(formatStatus(st));
             setActiveDownloadPhase(phase);
 
-            const total = st.totalBytes || 0;
-            const read = st.bytesRead || 0;
-            if (phase === "depot_download" && total > 0) {
-              setDownloadPct(Math.min(100, Math.round((read / total) * 100)));
-              setDownloadBytes({ read, total });
-              const now = Date.now();
-              const prev = speedRef.current;
-              if (prev.ts > 0 && now - prev.ts > 0) {
-                const byteDelta = read - prev.bytes;
-                const timeDelta = (now - prev.ts) / 1000;
-                if (byteDelta >= 0) setDownloadSpeed(Math.round(byteDelta / timeDelta));
+            if (phase === "depot_download") {
+              // DDM reports progress as depotPercent (0-100); no byte-level data
+              const pct = Math.min(100, Math.round(st.depotPercent || 0));
+              setDownloadPct(pct);
+              // Estimate speed from bytes if available, else clear
+              const total = st.totalBytes || 0;
+              const read = st.bytesRead || 0;
+              if (total > 0) {
+                setDownloadBytes({ read, total });
+                const now = Date.now();
+                const prev = speedRef.current;
+                if (prev.ts > 0 && now - prev.ts > 0) {
+                  const byteDelta = read - prev.bytes;
+                  const timeDelta = (now - prev.ts) / 1000;
+                  if (byteDelta >= 0) setDownloadSpeed(Math.round(byteDelta / timeDelta));
+                }
+                speedRef.current = { bytes: read, ts: Date.now() };
+              } else {
+                setDownloadBytes({ read: 0, total: 0 });
+                setDownloadSpeed(0);
               }
-              speedRef.current = { bytes: read, ts: Date.now() };
+            } else if (phase === "downloading") {
+              const total = st.totalBytes || 0;
+              const read = st.bytesRead || 0;
+              if (total > 0) {
+                setDownloadPct(Math.min(100, Math.round((read / total) * 100)));
+                setDownloadBytes({ read, total });
+                const now = Date.now();
+                const prev = speedRef.current;
+                if (prev.ts > 0 && now - prev.ts > 0) {
+                  const byteDelta = read - prev.bytes;
+                  const timeDelta = (now - prev.ts) / 1000;
+                  if (byteDelta >= 0) setDownloadSpeed(Math.round(byteDelta / timeDelta));
+                }
+                speedRef.current = { bytes: read, ts: Date.now() };
+              }
             } else {
               setDownloadPct(0);
               setDownloadSpeed(0);
@@ -225,6 +252,16 @@ export function GameList() {
         const result = await checkSlscheevoInstalled();
         if (result.success && result.installed) {
           setSlscheevoReady(true);
+        }
+      } catch { }
+    })();
+
+    // Check SLSsteam injection — auto-repairs steam.sh if missing
+    (async () => {
+      try {
+        const result = await getInjectionStatus();
+        if (result.patched || result.was_repaired_on_startup) {
+          setInjectionWarning(true);
         }
       } catch { }
     })();
@@ -434,8 +471,50 @@ export function GameList() {
     Navigation.Navigate(ROUTE_GAME_DETAIL + "/" + appid);
   };
 
+  const handleRestartSteam = async () => {
+    setRestartingStream(true);
+    await restartSteam();
+    setInjectionWarning(false);
+  };
+
   return (
     <>
+      {injectionWarning && (
+        <PanelSection>
+          <div style={{
+            background: "rgba(255, 140, 0, 0.1)",
+            border: "1px solid rgba(255, 140, 0, 0.4)",
+            borderLeft: "3px solid #ff8c00",
+            borderRadius: "6px",
+            padding: "10px 12px",
+          }}>
+            <div style={{ fontWeight: 600, color: "#ffaa33", fontSize: "13px", marginBottom: "4px" }}>
+              {t("slssteamInjectionMissing")}
+            </div>
+            <div style={{ fontSize: "12px", color: "#aaa", marginBottom: "10px" }}>
+              {t("slssteamInjectionRepairedBody")}
+            </div>
+            <button
+              onClick={handleRestartSteam}
+              disabled={restartingStream}
+              style={{
+                background: restartingStream ? "#555" : "#ff8c00",
+                color: "#fff",
+                border: "none",
+                borderRadius: "4px",
+                padding: "6px 14px",
+                fontSize: "12px",
+                fontWeight: 600,
+                cursor: restartingStream ? "default" : "pointer",
+                width: "100%",
+              }}
+            >
+              {restartingStream ? t("restarting") : t("restartSteam")}
+            </button>
+          </div>
+        </PanelSection>
+      )}
+
       <PanelSection title={t("addGame")}>
         <PanelSectionRow>
           <TextField
@@ -574,7 +653,7 @@ export function GameList() {
               }}>
                 {addStatus}
               </div>
-              {activeDownloadPhase === "depot_download" && downloadBytes.total > 0 && (
+              {(activeDownloadPhase === "depot_download" || activeDownloadPhase === "downloading") && downloadPct > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                   <div style={{ height: "6px", background: "rgba(255,255,255,0.1)", borderRadius: "3px", overflow: "hidden" }}>
                     <div style={{
@@ -587,8 +666,9 @@ export function GameList() {
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#9aa4b2" }}>
                     <span>
-                      {(downloadBytes.read / 1073741824).toFixed(2)} / {(downloadBytes.total / 1073741824).toFixed(2)} GB
-                      {" "}({downloadPct}%)
+                      {downloadBytes.total > 0
+                        ? `${(downloadBytes.read / 1073741824).toFixed(2)} / ${(downloadBytes.total / 1073741824).toFixed(2)} GB (${downloadPct}%)`
+                        : `${downloadPct}%`}
                     </span>
                     {downloadSpeed > 0 && (
                       <span style={{ color: "#7ed36f" }}>
@@ -605,7 +685,8 @@ export function GameList() {
         )}
       </PanelSection>
 
-      {/* Morrenus Search */}
+      {/* Morrenus Search — extra bottom padding so keyboard doesn't hide the field */}
+      <div style={{ paddingBottom: "280px" }}>
       <PanelSection title={t("searchByName")}>
         <PanelSectionRow>
           <TextField
@@ -684,6 +765,7 @@ export function GameList() {
           </>
         )}
       </PanelSection>
+      </div>
 
       <PanelSection title={t("myGames")}>
         <PanelSectionRow>
