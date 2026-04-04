@@ -46,7 +46,6 @@ export function GameList() {
   const [downloadSpeed, setDownloadSpeed] = useState(0);
   const [downloadBytes, setDownloadBytes] = useState({ read: 0, total: 0 });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const speedRef = useRef<{ bytes: number; ts: number }>({ bytes: 0, ts: 0 });
   const [sortMode, setSortMode] = useState<"name" | "appid" | "recent">("name");
 
   // Morrenus search state
@@ -174,46 +173,36 @@ export function GameList() {
             setActiveDownloadPhase(phase);
 
             if (phase === "depot_download") {
-              // DDM reports progress as depotPercent (0-100); no byte-level data
-              const pct = Math.min(100, Math.round(st.depotPercent || 0));
-              setDownloadPct(pct);
-              // Estimate speed from bytes if available, else clear
-              const total = st.totalBytes || 0;
-              const read = st.bytesRead || 0;
-              if (total > 0) {
-                setDownloadBytes({ read, total });
-                const now = Date.now();
-                const prev = speedRef.current;
-                if (prev.ts > 0 && now - prev.ts > 0) {
-                  const byteDelta = read - prev.bytes;
-                  const timeDelta = (now - prev.ts) / 1000;
-                  if (byteDelta >= 0) setDownloadSpeed(Math.round(byteDelta / timeDelta));
-                }
-                speedRef.current = { bytes: read, ts: Date.now() };
-              } else {
-                setDownloadBytes({ read: 0, total: 0 });
-                setDownloadSpeed(0);
+              // depotPercent is per-depot (0-100). Compute overall % from "Depot X/Y" in depotProgress.
+              const depotPct = st.depotPercent || 0;
+              const m = (st.depotProgress || "").match(/Depot\s+(\d+)\/(\d+)/);
+              let overallPct = depotPct;
+              if (m) {
+                const cur = parseInt(m[1]);
+                const tot = parseInt(m[2]);
+                if (tot > 0) overallPct = ((cur - 1) + depotPct / 100) / tot * 100;
               }
+              setDownloadPct(Math.min(100, Math.max(0, Math.round(overallPct))));
+              // No reliable byte data during depot phase — clear to avoid showing stale values
+              setDownloadBytes({ read: 0, total: 0 });
+              setDownloadSpeed(0);
             } else if (phase === "downloading") {
+              // Backend provides totalBytes, bytesRead and speed directly
               const total = st.totalBytes || 0;
               const read = st.bytesRead || 0;
               if (total > 0) {
                 setDownloadPct(Math.min(100, Math.round((read / total) * 100)));
                 setDownloadBytes({ read, total });
-                const now = Date.now();
-                const prev = speedRef.current;
-                if (prev.ts > 0 && now - prev.ts > 0) {
-                  const byteDelta = read - prev.bytes;
-                  const timeDelta = (now - prev.ts) / 1000;
-                  if (byteDelta >= 0) setDownloadSpeed(Math.round(byteDelta / timeDelta));
-                }
-                speedRef.current = { bytes: read, ts: Date.now() };
+                setDownloadSpeed(st.speed || 0);
+              } else {
+                setDownloadPct(0);
+                setDownloadBytes({ read: 0, total: 0 });
+                setDownloadSpeed(0);
               }
             } else {
               setDownloadPct(0);
               setDownloadSpeed(0);
               setDownloadBytes({ read: 0, total: 0 });
-              speedRef.current = { bytes: 0, ts: 0 };
             }
           }
         } catch {
@@ -554,7 +543,7 @@ export function GameList() {
                       fontSize: "10px",
                       fontWeight: 700,
                     }}>
-                      MC {pendingGameInfo.metacritic}
+                      Metacritic: {pendingGameInfo.metacritic}
                     </span>
                   )}
                 </div>
