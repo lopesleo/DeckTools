@@ -95,7 +95,7 @@ DeckTools builds upon and integrates with several community projects:
 | Project                                                                    | Author            | Role                                                                                           |
 | -------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------- |
 | [LuaToolsLinux](https://github.com/Star123451/LuaToolsLinux)               | Star123451        | Original project that inspired DeckTools. Core manifest handling and API logic derived from it |
-| [SLSsteam](https://github.com/nichelimux/SLSsteam)                         | nichelimux        | Steam emulator — DeckTools manages its configuration, tokens, FakeAppIds, and DLCs             |
+| [SLSsteam](https://github.com/AceSLS/SLSsteam)                             | AceSLS        | Steam emulator — DeckTools manages its configuration, tokens, FakeAppIds, and DLCs             |
 | [SLScheevo](https://github.com/xamionex/SLScheevo)                         | xamionex          | Achievement file generator for SLSsteam-managed games                                          |
 | [ACCELA](https://github.com/nichelimux/ACCELA)                             | nichelimux        | Dependency installer and package manager (Goldberg, DepotDownloader, .NET)                     |
 | [Goldberg Steam Emulator](https://gitlab.com/nichelimux/goldberg_emulator) | nichelimux        | Steam API emulator DLLs, bundled through ACCELA                                                |
