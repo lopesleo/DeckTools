@@ -24,6 +24,12 @@ export const verifySlssteamInjected = async () =>
 export const getInjectionStatus = async () =>
   parseResult(await call<[], string>("get_injection_status"));
 
+export const checkSlssteamHashStatus = async () =>
+  parseResult(await call<[], string>("check_slssteam_hash_status"));
+
+export const repairSlssteamHeadcrab = async () =>
+  parseResult(await call<[], string>("repair_slssteam_headcrab"));
+
 export const restartSteam = async () =>
   parseResult(await call<[], string>("restart_steam"));
 
@@ -249,6 +255,24 @@ export const cancelWorkshopDownload = async () =>
 // Repair / Maintenance
 export const repairAppmanifest = async (appid: number) =>
   parseResult(await call<[number], string>("repair_appmanifest", appid));
+export const reconfigureSlssteam = async (appid: number) =>
+  parseResult(await call<[number], string>("reconfigure_slssteam", appid));
+
+// Steamless DRM Removal
+export const checkSteamlessInstalled = async () =>
+  parseResult(await call<[], string>("check_steamless_installed"));
+
+export const downloadSteamless = async () =>
+  parseResult(await call<[], string>("download_steamless"));
+
+export const getSteamlessDownloadStatus = async () =>
+  parseResult(await call<[], string>("get_steamless_download_status"));
+
+export const runSteamless = async (installPath: string) =>
+  parseResult(await call<[string], string>("run_steamless", installPath));
+
+export const getSteamlessStatus = async () =>
+  parseResult(await call<[], string>("get_steamless_status"));
 
 // Store AppID Detection
 export const detectStoreAppid = async () =>

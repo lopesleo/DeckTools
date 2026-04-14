@@ -892,9 +892,9 @@ def _copy_ddm_from_tree(root_dir: str) -> str:
     for dirpath, _dirs, files in os.walk(root_dir):
         for fname in files:
             fl = fname.lower()
-            if fname == "DepotDownloaderMod" and not fl.endswith(".dll"):
+            if fname in ("DepotDownloaderMod", "DepotDownloader") and not fl.endswith(".dll"):
                 ddm_found = os.path.join(dirpath, fname)
-            elif fname == "DepotDownloaderMod.dll":
+            elif fname in ("DepotDownloaderMod.dll", "DepotDownloader.dll"):
                 ddm_dll_found = os.path.join(dirpath, fname)
             elif fname == "dotnet" and not fl.endswith((".dll", ".so")):
                 dotnet_found = os.path.join(dirpath, fname)
@@ -922,6 +922,16 @@ def _copy_ddm_from_tree(root_dir: str) -> str:
         elif os.path.isdir(src):
             shutil.copytree(src, dst, dirs_exist_ok=True)
     dest = os.path.join(_DDM_CACHE_DIR, "DepotDownloaderMod.dll")
+    # If the original DLL was named DepotDownloader (without Mod), create aliases
+    # so the rest of the codebase can always reference DepotDownloaderMod.*
+    src_dll_name = os.path.basename(ddm_dll_found)
+    if src_dll_name != "DepotDownloaderMod.dll":
+        base_name = src_dll_name.replace(".dll", "")
+        for ext in (".dll", ".runtimeconfig.json", ".deps.json"):
+            src_f = os.path.join(_DDM_CACHE_DIR, base_name + ext)
+            dst_f = os.path.join(_DDM_CACHE_DIR, "DepotDownloaderMod" + ext)
+            if os.path.isfile(src_f) and not os.path.exists(dst_f):
+                shutil.copy2(src_f, dst_f)
 
     # Copy dotnet if found and not available system-wide
     if dotnet_found and not _find_dotnet():
@@ -1182,6 +1192,31 @@ def _parse_lua_depots(lua_path: str) -> list[dict]:
     return depots
 
 
+
+async def _fetch_depot_os_map(appid: int) -> dict:
+    """Return {depot_id_int: "windows"|"linux"|"macos"|""} from steamcmd API."""
+    try:
+        client = await ensure_http_client("DepotOsMap")
+        resp = await client.get(f"https://api.steamcmd.net/v1/info/{appid}", timeout=10)
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+        if data.get("status") != "success":
+            return {}
+        app_depots = data.get("data", {}).get(str(appid), {}).get("depots", {})
+        os_map: dict = {}
+        for depot_id_str, depot_info in app_depots.items():
+            if not depot_id_str.isdigit():
+                continue
+            oslist = depot_info.get("config", {}).get("oslist", "")
+            # Use the declared OS; empty or multi-value means cross-platform
+            os_map[int(depot_id_str)] = oslist if (oslist and "," not in oslist) else ""
+        return os_map
+    except Exception as e:
+        logger.warning(f"DeckTools: Could not fetch depot OS map for {appid}: {e}")
+        return {}
+
+
 async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) -> None:
     """Run DepotDownloaderMod to download actual game files."""
     import tempfile
@@ -1212,6 +1247,9 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
     os.makedirs(install_dir, exist_ok=True)
     total_depots = len(depots)
     logger.info(f"DeckTools: Starting depot download for {appid}: {total_depots} depot(s) -> {install_dir}")
+
+    depot_os_map = await _fetch_depot_os_map(appid)
+    logger.info(f"DeckTools: Depot OS map for {appid}: {depot_os_map}")
 
     # Generate depot keys file (mistwalker_keys.vdf format: "depot_id;key\n")
     temp_dir = tempfile.gettempdir()
@@ -1264,14 +1302,18 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
         manifest_file = os.path.join(depotcache_dir, f"{depot_id}_{manifest_id}.manifest")
         has_local_manifest = os.path.exists(manifest_file)
 
+        # Use per-depot OS: windows depot gets -os windows, linux gets -os linux,
+        # cross-platform (empty oslist) gets no -os flag so all files are downloaded
+        depot_os = depot_os_map.get(depot_id, "")
         cmd = cmd_prefix + [
             "-app", str(appid),
             "-depot", str(depot_id),
             "-manifest", str(manifest_id),
             "-dir", install_dir,
             "-max-downloads", "8",
-            "-os", "linux",
         ]
+        if depot_os:
+            cmd.extend(["-os", depot_os])
 
         if has_local_manifest:
             cmd.extend(["-manifestfile", manifest_file])
@@ -1467,7 +1509,8 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
 
 
 async def _restart_steam_delayed(delay: int = 5) -> None:
-    """Restart Steam after a delay. On Steam Deck Game Mode, Steam auto-restarts."""
+    """Restart Steam after a delay. On Steam Deck Game Mode, Steam auto-restarts.
+    Also restarts plugin_loader afterwards so Decky comes back cleanly."""
     await asyncio.sleep(delay)
     try:
         import subprocess
@@ -1479,6 +1522,8 @@ async def _restart_steam_delayed(delay: int = 5) -> None:
         )
     except Exception as e:
         logger.warning(f"DeckTools: Failed to restart Steam: {e}")
+        return
+
 
 
 def _get_dir_size(path: str) -> int:
@@ -1763,14 +1808,11 @@ async def repair_appmanifest(appid: int) -> dict:
         target_library_path=found_lib_path
     )
 
-    import asyncio
-    asyncio.ensure_future(_restart_steam_delayed(3))
-
     return {
         "success": True,
         "installdir": os.path.basename(install_dir),
         "game_name": game_name,
-        "message": "Appmanifest repaired. Steam will restart.",
+        "message": "Appmanifest repaired.",
     }
 
 
@@ -1993,9 +2035,6 @@ async def _download_zip_for_app(appid: int, target_library_path: str = "") -> No
                             logger.info(f"DeckTools: Saved depot snapshot for {appid} ({len(snap_manifests)} depots)")
                     except Exception as snap_exc:
                         logger.warning(f"DeckTools: depot snapshot save error: {snap_exc}")
-
-                    # Restart Steam so it reads the fresh ACF (like ACCELA)
-                    asyncio.ensure_future(_restart_steam_delayed(5))
 
                     _set_download_state(appid, {"status": "done", "success": True, "api": name})
                     return

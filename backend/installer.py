@@ -75,47 +75,53 @@ async def install_dependencies() -> dict:
     global INSTALL_STATE
     INSTALL_STATE = {"status": "installing", "progress": "Starting installer...", "error": None}
 
+    tmp_dir = None
     try:
-        # The enter-the-wired script is the standard installer
-        script_url = "https://raw.githubusercontent.com/Star123451/enter-the-wired/main/install.sh"
+        BASE_URL = "https://raw.githubusercontent.com/ciscosweater/enter-the-wired/main"
+        # enter-the-wired requires accela and fix-deps in the same directory.
+        # Download all three into a temp dir so local-execution branch works.
+        tmp_dir = tempfile.mkdtemp(prefix="decktools_etw_")
+        scripts = {
+            "enter-the-wired": f"{BASE_URL}/enter-the-wired",
+            "accela": f"{BASE_URL}/accela",
+            "fix-deps": f"{BASE_URL}/fix-deps",
+        }
 
-        # Download script to temp file first (safer than piping curl to bash)
-        tmp_script = os.path.join(tempfile.gettempdir(), "decktools_install.sh")
-        dl_process = await asyncio.create_subprocess_exec(
-            "curl", "-fsSL", "-o", tmp_script, script_url,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        await dl_process.wait()
-        if dl_process.returncode != 0:
-            INSTALL_STATE["status"] = "failed"
-            INSTALL_STATE["error"] = "Failed to download installer script"
-            return {"success": False}
+        for name, url in scripts.items():
+            INSTALL_STATE["progress"] = f"Downloading {name}..."
+            dest = os.path.join(tmp_dir, name)
+            dl = await asyncio.create_subprocess_exec(
+                "curl", "-fsSL", "-o", dest, url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            await dl.wait()
+            if dl.returncode != 0:
+                INSTALL_STATE["status"] = "failed"
+                INSTALL_STATE["error"] = f"Failed to download {name}"
+                return {"success": False}
+            os.chmod(dest, 0o700)
 
-        # Verify it looks like a shell script (not a binary or HTML error page)
+        # Verify main script looks like a shell script
+        main_script = os.path.join(tmp_dir, "enter-the-wired")
         try:
-            with open(tmp_script, "r", encoding="utf-8", errors="replace") as f:
+            with open(main_script, "r", encoding="utf-8", errors="replace") as f:
                 first_line = f.readline(256)
             if not first_line.startswith("#"):
-                logger.warning(f"Installer script does not start with '#': {first_line[:80]}")
                 INSTALL_STATE["status"] = "failed"
                 INSTALL_STATE["error"] = "Downloaded file does not look like a shell script"
-                try:
-                    os.remove(tmp_script)
-                except Exception:
-                    pass
                 return {"success": False}
         except Exception as read_exc:
             INSTALL_STATE["status"] = "failed"
             INSTALL_STATE["error"] = f"Cannot read installer script: {read_exc}"
             return {"success": False}
 
-        # Execute the verified script
-        os.chmod(tmp_script, 0o700)
+        INSTALL_STATE["progress"] = "Running installer..."
         process = await asyncio.create_subprocess_exec(
-            "bash", tmp_script,
+            "bash", main_script,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            cwd=tmp_dir,
         )
 
         async def _read_output():
@@ -135,15 +141,16 @@ async def install_dependencies() -> dict:
             INSTALL_STATE["status"] = "failed"
             INSTALL_STATE["error"] = f"Installer exited with code {process.returncode}"
 
-        # Clean up temp script
-        try:
-            os.remove(tmp_script)
-        except Exception:
-            pass
-
     except Exception as exc:
         INSTALL_STATE["status"] = "failed"
         INSTALL_STATE["error"] = str(exc)
+    finally:
+        if tmp_dir:
+            import shutil
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
 
     return {"success": INSTALL_STATE["status"] == "done"}
 

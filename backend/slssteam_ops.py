@@ -195,6 +195,25 @@ def add_game_token(appid: int) -> dict:
 
         token = tokens_db.get(str(appid))
         if not token:
+            # Fallback: read the main-app token directly from the installed Lua
+            try:
+                import re as _re
+                from steam_utils import detect_steam_install_path
+                steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
+                lua_path = os.path.join(steam_path, "config", "stplug-in", f"{appid}.lua")
+                if os.path.exists(lua_path):
+                    with open(lua_path, "r", encoding="utf-8") as _lf:
+                        lua_text = _lf.read()
+                    # First addappid for the main appid: addappid(415200, 1, "token...")
+                    m = _re.search(
+                        rf'addappid\(\s*{appid}\s*,\s*\d+\s*,\s*"([0-9a-fA-F]{{64}})"\s*\)',
+                        lua_text,
+                    )
+                    if m:
+                        token = m.group(1)
+            except Exception:
+                pass
+        if not token:
             return {"success": False, "error": f"Token not found for AppID {appid}"}
 
         with open(config_path, "r", encoding="utf-8") as f:
@@ -638,12 +657,12 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
     errors = []
 
     try:
-        # 1. Find and remove game files + appmanifest
+        # 1. Find and remove game files
         path_info = get_game_install_path_response(appid)
         install_path = path_info.get("installPath") if isinstance(path_info, dict) else None
         library_path = path_info.get("libraryPath") if isinstance(path_info, dict) else None
 
-        # Fallback chain: multiple strategies to find game dir when ACF is gone
+        # Fallback chain: multiple strategies to find game dir when ACF is gone or dir is missing
         if not install_path or not os.path.exists(install_path):
             install_path = _find_game_dir_fallback(appid)
             if install_path:
@@ -658,32 +677,28 @@ def uninstall_game_full(appid: int, remove_compatdata: bool = False) -> dict:
                 logger.info(f"DeckTools: Removed game directory: {install_path}")
             else:
                 errors.append("Failed to fully remove game directory")
-
-            steamapps_dir = os.path.dirname(os.path.dirname(install_path))
-            acf_file = os.path.join(steamapps_dir, f"appmanifest_{appid}.acf")
-            if os.path.exists(acf_file):
-                try:
-                    os.chmod(acf_file, 0o644)
-                    os.remove(acf_file)
-                    removed.append("appmanifest")
-                except Exception as e:
-                    errors.append(f"Failed to remove appmanifest: {e}")
         else:
             logger.info(f"DeckTools: No game directory found for {appid}, skipping file removal")
-            # Still try to remove ACF from all known libraries
-            try:
-                from steam_utils import get_steam_libraries, detect_steam_install_path
-                libs = get_steam_libraries() or [{"path": detect_steam_install_path()}]
-                for lib in libs:
-                    lib_path = lib.get("path", "") if isinstance(lib, dict) else str(lib)
-                    acf_file = os.path.join(lib_path, "steamapps", f"appmanifest_{appid}.acf")
-                    if os.path.exists(acf_file):
+
+        # 1b. Remove appmanifest — always, independent of whether game dir was found.
+        # Search all known library paths so orphan ACFs are always cleaned up.
+        try:
+            from steam_utils import get_steam_libraries, detect_steam_install_path
+            libs = get_steam_libraries() or [{"path": detect_steam_install_path()}]
+            for lib in libs:
+                lib_path = lib.get("path", "") if isinstance(lib, dict) else str(lib)
+                acf_file = os.path.join(lib_path, "steamapps", f"appmanifest_{appid}.acf")
+                if os.path.exists(acf_file):
+                    try:
                         os.chmod(acf_file, 0o644)
                         os.remove(acf_file)
-                        removed.append("appmanifest")
-                        logger.info(f"DeckTools: Removed orphan ACF: {acf_file}")
-            except Exception as e:
-                logger.warning(f"DeckTools: ACF fallback removal error: {e}")
+                        if "appmanifest" not in removed:
+                            removed.append("appmanifest")
+                        logger.info(f"DeckTools: Removed ACF: {acf_file}")
+                    except Exception as e:
+                        errors.append(f"Failed to remove appmanifest: {e}")
+        except Exception as e:
+            logger.warning(f"DeckTools: ACF removal error: {e}")
 
         # 1b. Remove compatdata/proton prefix if requested
         if remove_compatdata:
@@ -845,3 +860,112 @@ def write_depot_decryption_keys(depot_token_map: dict) -> dict:
     except Exception as exc:
         logger.warning(f"DeckTools: write_depot_decryption_keys failed: {exc}")
         return {"success": False, "error": str(exc)}
+
+
+# ==========================================
+#  Headcrab repair
+# ==========================================
+
+_SLS_LOG_PATH = "/home/deck/.SLSsteam.log"
+_HEADCRAB_RESET_URL = "https://raw.githubusercontent.com/Deadboy666/h3adcr-b/refs/heads/main/reset2vanilla.sh"
+_HEADCRAB_PATCH_URL = "https://raw.githubusercontent.com/Deadboy666/h3adcr-b/refs/heads/main/headcrab.sh"
+
+
+def check_slssteam_hash_status() -> dict:
+    """Return whether the last SLSsteam session aborted due to an unknown steamclient.so hash."""
+    try:
+        if not os.path.exists(_SLS_LOG_PATH):
+            return {"success": True, "unknown_hash": False}
+        with open(_SLS_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        unknown_hash = "Unknown steamclient.so hash! Aborting..." in content
+        return {"success": True, "unknown_hash": unknown_hash}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+async def repair_slssteam_headcrab() -> dict:
+    """Reset and repatch SLSsteam via Headcrab scripts.
+
+    Follows the official troubleshooting sequence:
+      1. reset2vanilla.sh  — unlinks Millennium/SLSsteam, resets Steam install
+      2. launch Steam briefly so it reconfigures its bootstrap
+      3. kill Steam
+      4. headcrab.sh       — repatch with fresh SLSsteam injection
+    """
+    import asyncio
+
+    async def _run_shell(cmd: str):
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        return proc.returncode, stdout.decode(errors="replace")
+
+    try:
+        # Step 1: reset to vanilla (kills Steam + unlinks injection)
+        rc, out = await _run_shell(f'curl -fsSL "{_HEADCRAB_RESET_URL}" | bash')
+        if rc != 0:
+            return {"success": False, "step": "reset", "error": out}
+
+        # Step 2: launch Steam so it reconfigures its bootstrap, then kill it
+        steam_proc = await asyncio.create_subprocess_exec(
+            "steam",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        # Give Steam ~15 s to do its initial bootstrap reconfiguration
+        await asyncio.sleep(15)
+        try:
+            steam_proc.kill()
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(steam_proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
+        # Also kill any lingering steam processes
+        await _run_shell("pkill -x steam || true")
+        await asyncio.sleep(2)
+
+        # Step 3: repatch with Headcrab
+        rc, out = await _run_shell(f'curl -fsSL "{_HEADCRAB_PATCH_URL}" | bash')
+        if rc != 0:
+            return {"success": False, "step": "headcrab", "error": out}
+
+        return {"success": True, "output": out}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+async def reconfigure_slssteam(appid: int) -> dict:
+    """Re-run SLSsteam configuration for an already-installed game.
+
+    Useful after fixing add_game_token or when SLSsteam config is out of sync.
+    Reads tokens from the installed Lua and writes them to SLSsteam config + config.vdf.
+    """
+    import re as _re
+    from steam_utils import detect_steam_install_path
+
+    results = {}
+    try:
+        results["additional_apps"] = add_to_additional_apps(appid)
+        results["token"] = add_game_token(appid)
+
+        steam_path = detect_steam_install_path() or "/home/deck/.local/share/Steam"
+        lua_path = os.path.join(steam_path, "config", "stplug-in", f"{appid}.lua")
+        if os.path.exists(lua_path):
+            with open(lua_path, "r", encoding="utf-8") as lf:
+                lua_text = lf.read()
+            depot_keys = {}
+            for m in _re.finditer(r'addappid\(\s*(\d+)\s*,\s*\d+\s*,\s*"([0-9a-fA-F]{64})"\s*\)', lua_text):
+                depot_keys[m.group(1)] = m.group(2)
+            if depot_keys:
+                results["decryption_keys"] = write_depot_decryption_keys(depot_keys)
+
+        results["dlcs"] = await add_game_dlcs(appid)
+        return {"success": True, "results": results}
+    except Exception as e:
+        return {"success": False, "error": str(e), "results": results}

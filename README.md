@@ -78,6 +78,38 @@ Copy `plugin.json`, `main.py`, `package.json`, `dist/`, and `backend/` to the De
 - Dependency management (ACCELA, SLSsteam, .NET)
 - Language switcher (EN / PT-BR)
 
+## Troubleshooting
+
+### SLSsteam inactive after Steam update
+
+**Symptom:** SLSsteam stops working after a Steam client update. The plugin detects this automatically and shows an orange banner: *"Unknown steamclient.so hash — SLSsteam inactive"*.
+
+**Cause:** SLSsteam's SafeMode rejects `steamclient.so` versions it doesn't recognise. This happens when Steam updates to a version newer than the SLSsteam hash list. A simple Steam restart won't fix it — SLSsteam will abort again on every launch until it's updated.
+
+**Fix via plugin (automatic):** When the orange banner appears on the main page, tap **Repair SLSsteam (Headcrab)**. The plugin will:
+1. Reset Steam to vanilla (removes old injection)
+2. Launch Steam briefly so it reconfigures its bootstrap (~15 s)
+3. Kill Steam and repatch with the latest Headcrab/SLSsteam version
+
+The same button is also accessible via QAM → DeckTools → Settings → SLSsteam → **Repair SLSsteam (Headcrab)**.
+
+**Fix manually (Desktop Mode terminal):**
+```bash
+# Step 1 — reset Steam to vanilla (removes old SLSsteam injection)
+curl -fsSL "https://raw.githubusercontent.com/Deadboy666/h3adcr-b/refs/heads/main/reset2vanilla.sh" | bash
+
+# Step 2 — launch Steam once so it reconfigures its bootstrap, then close it
+steam
+# (close Steam after it fully loads, then exit)
+
+# Step 3 — repatch with Headcrab (downloads latest SLSsteam + injects)
+curl -fsSL "https://raw.githubusercontent.com/Deadboy666/h3adcr-b/refs/heads/main/headcrab.sh" | bash
+```
+
+After the repair, restart Steam. SLSsteam should inject normally.
+
+> **Note:** Headcrab also creates `steam.cfg` with `BootStrapperInhibitAll=enable` to prevent Steam from auto-updating to an incompatible version. To allow updates again, delete `~/.steam/steam/steam.cfg`.
+
 ## Development
 
 ```bash

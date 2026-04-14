@@ -22,6 +22,8 @@ import {
   getGameNotices,
   getInjectionStatus,
   restartSteam,
+  checkSlssteamHashStatus,
+  repairSlssteamHeadcrab,
 } from "../api";
 import { showLibraryPicker } from "../components/LibraryPickerModal";
 import { ROUTE_GAME_DETAIL, ROUTE_SETTINGS, ROUTE_DOWNLOADS } from "../routes";
@@ -56,6 +58,7 @@ export function GameList() {
   const [showMoreResults, setShowMoreResults] = useState(false);
   const [slscheevoReady, setSlscheevoReady] = useState(false);
   const [injectionWarning, setInjectionWarning] = useState(false);
+  const [unknownHash, setUnknownHash] = useState(false);
   const [restartingStream, setRestartingStream] = useState(false);
   const [syncState, setSyncState] = useState<any>(null);
   const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
@@ -248,8 +251,13 @@ export function GameList() {
     // Check SLSsteam injection — auto-repairs steam.sh if missing
     (async () => {
       try {
-        const result = await getInjectionStatus();
-        if (result.patched || result.was_repaired_on_startup) {
+        const [injResult, hashResult] = await Promise.all([
+          getInjectionStatus(),
+          checkSlssteamHashStatus(),
+        ]);
+        const hasUnknownHash = hashResult.success && hashResult.unknown_hash;
+        setUnknownHash(hasUnknownHash);
+        if (injResult.patched || injResult.was_repaired_on_startup || hasUnknownHash) {
           setInjectionWarning(true);
         }
       } catch { }
@@ -462,8 +470,17 @@ export function GameList() {
 
   const handleRestartSteam = async () => {
     setRestartingStream(true);
-    await restartSteam();
-    setInjectionWarning(false);
+    if (unknownHash) {
+      const result = await repairSlssteamHeadcrab();
+      if (result.success) {
+        setUnknownHash(false);
+        setInjectionWarning(false);
+      }
+    } else {
+      await restartSteam();
+      setInjectionWarning(false);
+    }
+    setRestartingStream(false);
   };
 
   return (
@@ -478,10 +495,10 @@ export function GameList() {
             padding: "10px 12px",
           }}>
             <div style={{ fontWeight: 600, color: "#ffaa33", fontSize: "13px", marginBottom: "4px" }}>
-              {t("slssteamInjectionMissing")}
+              {unknownHash ? t("slssteamUnknownHash") : t("slssteamInjectionMissing")}
             </div>
             <div style={{ fontSize: "12px", color: "#aaa", marginBottom: "10px" }}>
-              {t("slssteamInjectionRepairedBody")}
+              {unknownHash ? t("repairingHeadcrabBody") : t("slssteamInjectionRepairedBody")}
             </div>
             <button
               onClick={handleRestartSteam}
@@ -498,7 +515,9 @@ export function GameList() {
                 width: "100%",
               }}
             >
-              {restartingStream ? t("restarting") : t("restartSteam")}
+              {restartingStream
+                ? (unknownHash ? t("repairingHeadcrab") : t("restarting"))
+                : (unknownHash ? t("repairSlssteamHeadcrab") : t("restartSteam"))}
             </button>
           </div>
         </PanelSection>
@@ -838,6 +857,14 @@ export function GameList() {
             </PanelSectionRow>
           </>
         )}
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={() => restartSteam()}
+          >
+            {t("restartSteam")}
+          </ButtonItem>
+        </PanelSectionRow>
       </PanelSection>
     </>
   );

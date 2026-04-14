@@ -5,6 +5,7 @@ __pycache__/
 .claude/
 tmpclaude-*
 askpass.sh
+askpass*
 deploy.sh
 deploy.bat
 backend/appaccesstokens.json

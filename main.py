@@ -98,10 +98,31 @@ class Plugin:
         return _j(result)
 
     async def restart_steam(self) -> str:
-        """Shutdown Steam (Game Mode auto-restarts it)."""
+        """Shutdown Steam as deck user (Game Mode auto-restarts it)."""
+        import subprocess, os
+        steam_bin = "/home/deck/.local/share/Steam/ubuntu12_32/steam"
+        # Try IPC shutdown as deck user first
+        for cmd in [
+            ["sudo", "-u", "deck", steam_bin, "-shutdown"],
+            ["su", "-c", f"{steam_bin} -shutdown", "deck"],
+        ]:
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return _j({"success": True})
+            except Exception:
+                continue
+        # Fallback: SIGTERM to steam process owned by deck
         try:
-            import subprocess
-            subprocess.Popen(["steam", "-shutdown"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            import signal
+            result = subprocess.run(
+                ["pgrep", "-u", "deck", "-f", "ubuntu12_32/steam"],
+                capture_output=True, text=True
+            )
+            for pid_str in result.stdout.strip().splitlines():
+                try:
+                    os.kill(int(pid_str), signal.SIGTERM)
+                except Exception:
+                    pass
             return _j({"success": True})
         except Exception as exc:
             return _j({"success": False, "error": str(exc)})
@@ -113,6 +134,14 @@ class Plugin:
     async def verify_slssteam_injected(self) -> str:
         from paths import verify_slssteam_injected
         return _j(verify_slssteam_injected())
+
+    async def check_slssteam_hash_status(self) -> str:
+        from slssteam_ops import check_slssteam_hash_status
+        return _j(check_slssteam_hash_status())
+
+    async def repair_slssteam_headcrab(self) -> str:
+        from slssteam_ops import repair_slssteam_headcrab
+        return _j(await repair_slssteam_headcrab())
 
     # ==========================================================================
     # API Manifest
@@ -427,6 +456,34 @@ class Plugin:
     async def repair_appmanifest(self, appid: int) -> str:
         from downloads import repair_appmanifest
         return _j(await repair_appmanifest(appid))
+
+    async def reconfigure_slssteam(self, appid: int) -> str:
+        from slssteam_ops import reconfigure_slssteam
+        return _j(await reconfigure_slssteam(appid))
+
+    # ==========================================================================
+    # Steamless DRM Removal
+    # ==========================================================================
+
+    async def check_steamless_installed(self) -> str:
+        from steamless import check_steamless_installed
+        return _j(check_steamless_installed())
+
+    async def download_steamless(self) -> str:
+        from steamless import download_steamless
+        return _j(await download_steamless())
+
+    async def get_steamless_download_status(self) -> str:
+        from steamless import get_steamless_download_status
+        return _j(get_steamless_download_status())
+
+    async def run_steamless(self, install_path: str) -> str:
+        from steamless import run_steamless
+        return _j(await run_steamless(install_path))
+
+    async def get_steamless_status(self) -> str:
+        from steamless import get_steamless_status
+        return _j(get_steamless_status())
 
     # ==========================================================================
     # Store AppID Detection

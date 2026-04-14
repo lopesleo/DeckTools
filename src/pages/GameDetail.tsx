@@ -36,6 +36,7 @@ import {
   uninstallGameFull,
   fetchAppName,
   repairAppmanifest,
+  reconfigureSlssteam,
   checkGameUpdate,
   checkGoldbergStatus,
   applyGoldberg,
@@ -46,6 +47,11 @@ import {
   downloadSlscheevo,
   getSlscheevoDownloadStatus,
   getSteamLibraries,
+  checkSteamlessInstalled,
+  downloadSteamless,
+  getSteamlessDownloadStatus,
+  runSteamless,
+  getSteamlessStatus,
 } from "../api";
 import { useT } from "../i18n";
 import { showLibraryPicker } from "../components/LibraryPickerModal";
@@ -99,6 +105,10 @@ export function GameDetail({ appid }: GameDetailProps) {
   const [achievementGenState, setAchievementGenState] = useState<any>(null);
   const [slscheevoBinaryPath, setSlscheevoBinaryPath] = useState("");
   const [busy, setBusy] = useState("");
+  const [steamlessInstalled, setSteamlessInstalled] = useState(false);
+  const [steamlessDotnet, setSteamlessDotnet] = useState(false);
+  const [steamlessDownloadState, setSteamlessDownloadState] = useState<any>(null);
+  const [steamlessState, setSteamlessState] = useState<any>(null);
   const [steamLibraries, setSteamLibraries] = useState<any[]>([]);
 
   const toast = (title: string, body?: string, duration = 3000) =>
@@ -175,6 +185,12 @@ export function GameDetail({ appid }: GameDetailProps) {
         if (achResult.binaryPath) setSlscheevoBinaryPath(achResult.binaryPath);
       }
 
+      const slResult = await checkSteamlessInstalled();
+      if (slResult.success) {
+        setSteamlessInstalled(slResult.installed);
+        setSteamlessDotnet(slResult.dotnetAvailable);
+      }
+
 };
     load();
   }, [appid]);
@@ -244,6 +260,45 @@ export function GameDetail({ appid }: GameDetailProps) {
     }, 1500);
     return () => clearInterval(interval);
   }, [achievementStatus, appid]);
+
+  // Poll Steamless download
+  useEffect(() => {
+    if (!steamlessDownloadState || steamlessDownloadState.status !== "downloading") return;
+    const interval = setInterval(async () => {
+      const status = await getSteamlessDownloadStatus();
+      if (status.success && status.state) {
+        setSteamlessDownloadState(status.state);
+        if (status.state.status === "done") {
+          setSteamlessInstalled(true);
+          toast(t("steamlessDownloaded"), gameName);
+        } else if (status.state.status === "error") {
+          toast(t("toastError"), status.state.error || "", 5000);
+        }
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [steamlessDownloadState]);
+
+  // Poll Steamless status
+  useEffect(() => {
+    if (!steamlessState || steamlessState.status !== "running") return;
+    const interval = setInterval(async () => {
+      const status = await getSteamlessStatus();
+      if (status.success && status.state) {
+        setSteamlessState(status.state);
+        if (status.state.status === "done") {
+          const count = status.state.successCount || 0;
+          const total = status.state.total || 0;
+          if (count > 0) {
+            toast(t("removeDrmDone", count, total), gameName);
+          } else {
+            toast(t("removeDrmNoDrm"), gameName, 4000);
+          }
+        }
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [steamlessState]);
 
   const doStartDownload = async (libraryPath: string = "") => {
     const result = await startDownload(appid, libraryPath);
@@ -496,6 +551,39 @@ export function GameDetail({ appid }: GameDetailProps) {
     } else {
       setBusy("");
       toast(t("toastError"), result.error || "", 4000);
+    }
+  };
+
+  const handleDownloadSteamless = async () => {
+    const result = await downloadSteamless();
+    if (result.success) {
+      setSteamlessDownloadState({ status: "downloading", progress: "Starting..." });
+    } else {
+      toast(t("toastError"), result.error || "", 4000);
+    }
+  };
+
+  const handleRunSteamless = async () => {
+    if (!installPath) {
+      toast(t("toastError"), t("installPathNotFound"), 4000);
+      return;
+    }
+    const result = await runSteamless(installPath);
+    if (result.success) {
+      setSteamlessState({ status: "running", total: result.total, processed: 0, current: "" });
+    } else {
+      toast(t("toastError"), result.error || "", 4000);
+    }
+  };
+
+  const handleReconfigureSls = async () => {
+    setBusy("sls_reconfig");
+    const result = await reconfigureSlssteam(appid);
+    setBusy("");
+    if (result.success) {
+      toast(t("toastSlsReconfigured"), gameName);
+    } else {
+      toast(t("toastError"), result.error || "Failed", 4000);
     }
   };
 
@@ -891,6 +979,43 @@ export function GameDetail({ appid }: GameDetailProps) {
         <ActionButton
           label={t("applyLinuxNativeFix")}
           onClick={handleNativeFix}
+        />
+        {!steamlessInstalled ? (
+          <ActionButton
+            label={
+              steamlessDownloadState?.status === "downloading"
+                ? t("downloadingSteamless")
+                : t("downloadSteamless")
+            }
+            onClick={handleDownloadSteamless}
+            disabled={steamlessDownloadState?.status === "downloading" || !steamlessDotnet}
+            description={
+              !steamlessDotnet
+                ? t("steamlessDotnetRequired")
+                : (steamlessDownloadState?.progress || t("removeDrmSteamlessDesc"))
+            }
+          />
+        ) : installPath ? (
+          <ActionButton
+            label={
+              steamlessState?.status === "running"
+                ? t("removeDrmRunning", steamlessState.processed || 0, steamlessState.total || 0)
+                : t("removeDrmSteamless")
+            }
+            onClick={handleRunSteamless}
+            disabled={steamlessState?.status === "running"}
+            description={
+              steamlessState?.status === "done"
+                ? t("removeDrmDone", steamlessState.successCount || 0, steamlessState.total || 0)
+                : t("removeDrmSteamlessDesc")
+            }
+          />
+        ) : null}
+        <ActionButton
+          label={busy === "sls_reconfig" ? t("reconfiguringSls") : t("reconfigureSls")}
+          onClick={handleReconfigureSls}
+          disabled={busy === "sls_reconfig"}
+          description={t("reconfigureSlsDesc")}
         />
         <ActionButton
           label={busy === "acf" ? t("repairingAcf") : t("repairAppmanifest")}

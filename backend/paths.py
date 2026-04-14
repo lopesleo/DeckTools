@@ -218,16 +218,125 @@ def get_steam_appcache_stats_dir() -> Optional[str]:
 # ---------------------------------------------------------------------------
 # SLSsteam injection verification
 # ---------------------------------------------------------------------------
+#
+# On SteamOS/Steam Deck, the correct injection target is /usr/bin/steam
+# (on the read-only rootfs — never overwritten by Steam updates).
+# We add LD_AUDIT before the final `exec` line in that file.
+# Requires steamos-readonly disable/enable around the write.
+#
+# steam.sh (~/.local/share/Steam/steam.sh) is overwritten by Steam client
+# updates and is NOT a reliable injection target on SteamOS.
+#
+# DO NOT use:
+#   - ~/.config/environment.d/ (applies to ALL user services — causes boot freeze)
+#   - LD_PRELOAD (Steam bootstrap strips it before re-exec)
 
-def _get_ld_audit_line() -> str:
-    sls_dir = find_slssteam_root()
-    return f'export LD_AUDIT={sls_dir}/library-inject.so:{sls_dir}/SLSsteam.so'
+
+_USR_BIN_STEAM = "/usr/bin/steam"
+
+
+def _check_process_injected() -> bool:
+    """Return True if SLSsteam.so is actually mapped into any running process."""
+    try:
+        import glob as _glob
+        for maps_path in _glob.glob("/proc/*/maps"):
+            try:
+                with open(maps_path, "r", errors="replace") as _f:
+                    if "SLSsteam.so" in _f.read():
+                        return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
+def _ld_audit_line(sls_dir: str) -> str:
+    lib_inject = os.path.join(sls_dir, "library-inject.so")
+    sls_so = os.path.join(sls_dir, "SLSsteam.so")
+    if os.path.isfile(lib_inject):
+        return f"export LD_AUDIT={lib_inject}:{sls_so}"
+    return f"export LD_AUDIT={sls_so}"
+
+
+def _is_patched(content: str, sls_dir: str) -> bool:
+    sls_so = os.path.join(sls_dir, "SLSsteam.so")
+    return "export LD_AUDIT=" in content and sls_so in content
+
+
+def _patch_usr_bin_steam(sls_dir: str) -> dict:
+    """Patch /usr/bin/steam by inserting LD_AUDIT before the final exec line."""
+    import subprocess
+    target = _USR_BIN_STEAM
+    try:
+        with open(target, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as exc:
+        return {"patched": False, "already_ok": False, "error": f"read {target}: {exc}"}
+
+    if _is_patched(content, sls_dir):
+        return {"patched": False, "already_ok": True, "method": "usr_bin_steam", "error": None}
+
+    ld_audit = _ld_audit_line(sls_dir)
+    lines = content.splitlines(keepends=True)
+
+    # Find last exec line
+    exec_idx = None
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].lstrip().startswith("exec "):
+            exec_idx = i
+            break
+
+    if exec_idx is None:
+        return {"patched": False, "already_ok": False, "error": "exec line not found in /usr/bin/steam"}
+
+    lines.insert(exec_idx, ld_audit + "\n")
+    new_content = "".join(lines)
+
+    try:
+        subprocess.run(["steamos-readonly", "disable"], check=True, capture_output=True)
+    except Exception:
+        pass  # may already be disabled or not available
+
+    try:
+        tmp = target + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        os.replace(tmp, target)
+        result = {"patched": True, "already_ok": False, "method": "usr_bin_steam", "error": None}
+    except Exception as exc:
+        result = {"patched": False, "already_ok": False, "error": f"write {target}: {exc}"}
+
+    try:
+        subprocess.run(["steamos-readonly", "enable"], check=True, capture_output=True)
+    except Exception:
+        pass
+
+    return result
 
 
 def verify_slssteam_injected() -> dict:
     if not check_slssteam_installed():
         return {"patched": False, "already_ok": False, "error": "SLSsteam not installed"}
 
+    # 1. Best check: SLSsteam.so actually loaded in a running process
+    if _check_process_injected():
+        return {"patched": False, "already_ok": True, "method": "active", "error": None}
+
+    sls_dir = find_slssteam_root()
+
+    # 2. Primary: patch /usr/bin/steam (survives Steam updates on SteamOS)
+    if os.path.isfile(_USR_BIN_STEAM):
+        try:
+            with open(_USR_BIN_STEAM, "r", encoding="utf-8") as f:
+                content = f.read()
+            if _is_patched(content, sls_dir):
+                return {"patched": False, "already_ok": True, "method": "usr_bin_steam", "error": None}
+        except Exception:
+            pass
+        return _patch_usr_bin_steam(sls_dir)
+
+    # 3. Fallback: patch steam.sh (desktop Linux)
     steam_sh = None
     for candidate in _STEAM_PATHS:
         path = os.path.join(candidate, "steam.sh")
@@ -244,17 +353,44 @@ def verify_slssteam_injected() -> dict:
     except Exception as exc:
         return {"patched": False, "already_ok": False, "error": f"read failed: {exc}"}
 
-    if "LD_AUDIT" in content and "SLSsteam" in content:
-        return {"patched": False, "already_ok": True, "error": None}
+    if _is_patched(content, sls_dir):
+        return {"patched": False, "already_ok": True, "method": "steam.sh_ld_audit", "error": None}
 
     try:
-        ld_audit_line = _get_ld_audit_line()
+        ld_audit = _ld_audit_line(sls_dir)
         lines = content.splitlines(keepends=True)
-        insert_pos = min(9, len(lines))
-        lines.insert(insert_pos, ld_audit_line + "\n")
-        with open(steam_sh, "w", encoding="utf-8") as f:
-            f.writelines(lines)
-        return {"patched": True, "already_ok": False, "error": None}
+        sls_so = os.path.join(sls_dir, "SLSsteam.so")
+
+        # Drop stale SLSsteam LD_AUDIT lines before re-inserting.
+        lines = [
+            l for l in lines
+            if not ("LD_AUDIT=" in l and sls_so in l)
+        ]
+
+        # Prefer insertion right before the real Steam client launch.
+        insert_idx = None
+        for i, line in enumerate(lines):
+            if '"$STEAMROOT/$STEAMEXEPATH" "$@"' in line:
+                insert_idx = i
+                break
+
+        # Fallback for unexpected script variants: before last non-steamcmd exec.
+        if insert_idx is None:
+            for i in range(len(lines) - 1, -1, -1):
+                stripped = lines[i].lstrip()
+                if stripped.startswith("exec ") and "steamcmd.sh" not in stripped:
+                    insert_idx = i
+                    break
+
+        if insert_idx is None:
+            insert_idx = len(lines)
+
+        lines.insert(insert_idx, ld_audit + "\n")
+        tmp = steam_sh + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("".join(lines))
+        os.replace(tmp, steam_sh)
+        return {"patched": True, "already_ok": False, "method": "steam.sh_ld_audit", "error": None}
     except Exception as exc:
         return {"patched": False, "already_ok": False, "error": f"write failed: {exc}"}
 

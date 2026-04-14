@@ -21,6 +21,9 @@ import {
   getSlsPlayStatus,
   setSlsPlayStatus,
   getSteamLibraries,
+  restartSteam,
+  checkSlssteamHashStatus,
+  repairSlssteamHeadcrab,
 } from "../api";
 import { useT, getLanguage, setLanguage } from "../i18n";
 
@@ -32,6 +35,8 @@ export function Settings() {
   const [platform, setPlatform] = useState<any>(null);
   const [playNotOwned, setPlayNotOwned] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [unknownHash, setUnknownHash] = useState(false);
   const [lang, setLang] = useState(getLanguage());
   const [libraries, setLibraries] = useState<any[]>([]);
 
@@ -58,6 +63,9 @@ export function Settings() {
 
       const playResult = await getSlsPlayStatus();
       if (playResult.success) setPlayNotOwned(playResult.enabled);
+
+      const hashResult = await checkSlssteamHashStatus();
+      if (hashResult.success) setUnknownHash(hashResult.unknown_hash);
 
       const libResult = await getSteamLibraries();
       if (libResult.success && libResult.libraries) setLibraries(libResult.libraries);
@@ -123,6 +131,19 @@ export function Settings() {
     await setSlsPlayStatus(value);
   };
 
+  const handleRepairHeadcrab = async () => {
+    setRepairing(true);
+    toast(t("repairingHeadcrab"), t("repairingHeadcrabBody"), 20000);
+    const result = await repairSlssteamHeadcrab();
+    setRepairing(false);
+    if (result.success) {
+      setUnknownHash(false);
+      toast(t("headcrabRepaired"), t("headcrabRepairedBody"), 6000);
+    } else {
+      toast(t("toastError"), result.error || `step: ${result.step}`, 6000);
+    }
+  };
+
   return (
     <>
       <PanelSection title={t("apiCredentials")}>
@@ -176,6 +197,29 @@ export function Settings() {
             {t("verifySlssteamInjection")}
           </ButtonItem>
         </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={() => restartSteam()}>
+            {t("restartSteam")}
+          </ButtonItem>
+        </PanelSectionRow>
+        {unknownHash && (
+          <>
+            <PanelSectionRow>
+              <div style={{ fontSize: "11px", color: "#ffaa00" }}>
+                ⚠ {t("slssteamUnknownHash")}
+              </div>
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <ButtonItem
+                layout="below"
+                onClick={handleRepairHeadcrab}
+                disabled={repairing}
+              >
+                {repairing ? t("repairingHeadcrab") : t("repairSlssteamHeadcrab")}
+              </ButtonItem>
+            </PanelSectionRow>
+          </>
+        )}
       </PanelSection>
 
       <PanelSection title={t("dependencies")}>
@@ -305,6 +349,8 @@ export function Settings() {
           {t("back")}
         </ButtonItem>
       </PanelSection>
+
+      <div style={{ height: "48px" }} />
     </>
   );
 }
