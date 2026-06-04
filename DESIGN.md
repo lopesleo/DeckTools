@@ -72,7 +72,7 @@ Status por jogo: `instalado`, `manifest disponível`, `pendente`.
 
 ```
 AppID → itera APIs habilitadas (api.json)
-  → Morrenus: GET https://manifest.morrenus.xyz/api/v1/manifest/{appid}?api_key={key}
+  → Hubcap: GET https://hubcapmanifest.com/api/v1/manifest/{appid} (Authorization: Bearer {key})
   → Ryuu: GET com cookie session= no header
   → Resposta: ZIP (.manifest + .lua)
   → Extrai .manifest → {steam_root}/depotcache/

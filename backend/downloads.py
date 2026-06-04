@@ -1355,6 +1355,12 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
     if dotnet_path:
         clean_env["DOTNET_ROOT"] = os.path.dirname(dotnet_path)
 
+    # Run DDM at a lower CPU priority so background downloads don't starve an
+    # active game. nice deprioritizes DDM only under contention — download speed
+    # is unaffected when the system is idle. (Issue #3)
+    import shutil as _shutil
+    nice_prefix = ["nice", "-n", "10"] if _shutil.which("nice") else []
+
     _DEPOT_MAX_RETRIES = 3
     _DEPOT_RETRY_DELAYS = [5, 15, 30]
     _AUTH_ERROR_MARKERS = ("access denied", "manifest not available", "no subscription", "purchase")
@@ -1381,7 +1387,7 @@ async def _run_depot_download(appid: int, depots: list[dict], install_dir: str) 
         # Use per-depot OS: windows depot gets -os windows, linux gets -os linux,
         # cross-platform (empty oslist) gets no -os flag so all files are downloaded
         depot_os = depot_os_map.get(depot_id, "")
-        cmd = cmd_prefix + [
+        cmd = nice_prefix + cmd_prefix + [
             "-app", str(appid),
             "-depot", str(depot_id),
             "-manifest", str(manifest_id),
@@ -1917,6 +1923,22 @@ async def _download_zip_for_app(appid: int, target_library_path: str = "") -> No
         success_code = int(api.get("success_code", 200))
         unavailable_code = int(api.get("unavailable_code", 404))
         url = template.replace("<appid>", str(appid))
+
+        # Hubcap (formerly Morrenus) authenticates with an "Authorization: Bearer"
+        # header rather than an api_key query param. Pull the key out of the URL so
+        # it can be sent as a header and never gets logged below.
+        hubcap_token = ""
+        if "hubcapmanifest.com" in url or "morrenus.xyz" in url:
+            from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+            parts = urlsplit(url)
+            remaining_qs = []
+            for k, v in parse_qsl(parts.query, keep_blank_values=True):
+                if k == "api_key":
+                    hubcap_token = v
+                else:
+                    remaining_qs.append((k, v))
+            url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(remaining_qs), parts.fragment))
+
         _set_download_state(appid, {
             "status": "checking", "currentApi": name,
             "bytesRead": 0, "totalBytes": 0,
@@ -1925,6 +1947,10 @@ async def _download_zip_for_app(appid: int, target_library_path: str = "") -> No
 
         try:
             headers = {"User-Agent": USER_AGENT}
+
+            # Hubcap Bearer auth
+            if hubcap_token:
+                headers["Authorization"] = f"Bearer {hubcap_token}"
 
             # Ryuu cookie injection
             if "ryuu.lol" in url:

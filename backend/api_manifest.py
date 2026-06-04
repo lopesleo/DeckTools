@@ -191,11 +191,15 @@ def update_morrenus_key(key_content: str) -> dict:
             root_data["api_list"] = []
 
         api_list = root_data["api_list"]
-        new_url = f"https://manifest.morrenus.xyz/api/v1/manifest/<appid>?api_key={key_content}"
+        new_url = f"https://hubcapmanifest.com/api/v1/manifest/<appid>?api_key={key_content}"
         found = False
 
         for api in api_list:
-            if "morrenus" in api.get("name", "").lower() or "morrenus.xyz" in api.get("url", ""):
+            name_l = api.get("name", "").lower()
+            url = api.get("url", "")
+            if ("hubcap" in name_l or "morrenus" in name_l
+                    or "hubcapmanifest.com" in url or "morrenus.xyz" in url):
+                api["name"] = "Hubcap (Official ACCELA)"
                 api["url"] = new_url
                 api["enabled"] = True
                 found = True
@@ -203,7 +207,7 @@ def update_morrenus_key(key_content: str) -> dict:
 
         if not found:
             api_list.insert(0, {
-                "name": "Morrenus (Official ACCELA)",
+                "name": "Hubcap (Official ACCELA)",
                 "url": new_url,
                 "success_code": 200,
                 "unavailable_code": 404,
@@ -213,7 +217,7 @@ def update_morrenus_key(key_content: str) -> dict:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(root_data, f, indent=4)
 
-        return {"success": True, "message": "Morrenus key updated successfully"}
+        return {"success": True, "message": "Hubcap key updated successfully"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -228,7 +232,7 @@ def _get_morrenus_key() -> str:
             data = json.loads(f.read())
         for api in data.get("api_list", []):
             url = api.get("url", "")
-            if "morrenus.xyz" in url and "api_key=" in url:
+            if ("hubcapmanifest.com" in url or "morrenus.xyz" in url) and "api_key=" in url:
                 return url.split("api_key=")[-1].strip()
         return ""
     except Exception:
@@ -241,20 +245,20 @@ def load_morrenus_key() -> str:
 
 
 async def search_morrenus(query: str) -> dict:
-    """Search for games by name using the Morrenus API."""
+    """Search for games by name using the Hubcap (formerly Morrenus) API."""
     try:
         key = _get_morrenus_key()
         if not key:
-            return {"success": False, "error": "Morrenus API key not configured. Set it in Settings."}
+            return {"success": False, "error": "Hubcap API key not configured. Set it in Settings."}
 
-        if len(query.strip()) < 2:
-            return {"success": False, "error": "Search query must be at least 2 characters"}
+        if len(query.strip()) < 3:
+            return {"success": False, "error": "Search query must be at least 3 characters"}
 
         from urllib.parse import urlencode
-        client = await ensure_http_client("MorrenusSearch")
+        client = await ensure_http_client("HubcapSearch")
         qs = urlencode({"q": query.strip(), "limit": 50})
         resp = await client.get(
-            f"https://manifest.morrenus.xyz/api/v1/search?{qs}",
+            f"https://hubcapmanifest.com/api/v1/search?{qs}",
             headers={"Authorization": f"Bearer {key}"},
             timeout=15,
         )

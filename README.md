@@ -134,7 +134,7 @@ DeckTools builds upon and integrates with several community projects:
 | [enter-the-wired](https://github.com/Star123451/enter-the-wired)           | Star123451        | Automated dependency installation script                                                       |
 | [DepotDownloader](https://github.com/SteamRE/DepotDownloader)              | SteamRE           | Steam depot content downloader                                                                 |
 | [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader)          | SteamDeckHomebrew | Plugin platform for Steam Deck Game Mode                                                       |
-| [Morrenus](https://manifest.morrenus.xyz)                                  | Morrenus          | Manifest API and game search service                                                           |
+| [Hubcap](https://hubcapmanifest.com)                                       | Hubcap            | Manifest API and game search service (formerly Morrenus)                                       |
 
 ## Disclaimer
 
